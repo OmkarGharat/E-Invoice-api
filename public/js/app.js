@@ -25,23 +25,34 @@ window.testEndpoint = async function (endpoint, containerId = 'testResult', cont
     testResult.querySelector('.card').className = 'card bg-dark border-secondary';
 
     try {
-        // Auto-Auth for "Quick Testing" dashboard (Simulating User w/ API Key)
-        const headers = {};
-        if (endpoint.includes('/api/e-invoice/invoices') || endpoint.includes('/api/e-invoice/generate')) {
-            // Use fetched credentials if available
-            if (APP_CREDENTIALS.apiKey) {
-                headers['x-api-key'] = APP_CREDENTIALS.apiKey;
-            }
+        // Auto-Auth for "Quick Testing" dashboard (Simulating User w/ Headers)
+        const headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': 'Bearer ' + (APP_CREDENTIALS.token || 'demo-token'),
+            'x-api-key': APP_CREDENTIALS.apiKey || 'ei_demo_8x92m3c7-4j5k-2h1g-9s8d-7f6g5h4j3k2l'
+        };
+
+        // Allow valid auth override if specific auth is needed
+        if (APP_CREDENTIALS.apiKey) {
+            headers['x-api-key'] = APP_CREDENTIALS.apiKey;
         }
 
         const response = await fetch(endpoint, { headers });
+        const contentType = response.headers.get('content-type');
+
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-        const data = await response.json();
 
-        // Format the JSON response with syntax highlighting
-        resultContent.textContent = JSON.stringify(data, null, 2);
+        if (contentType && contentType.includes('application/xml')) {
+            const text = await response.text();
+            resultContent.textContent = text;
+        } else {
+            const data = await response.json();
+            resultContent.textContent = JSON.stringify(data, null, 2);
+        }
+
         testResult.querySelector('.card').className = 'card bg-dark border-success';
 
         // Update stats if health endpoint was tested
@@ -62,8 +73,64 @@ window.testEndpoint = async function (endpoint, containerId = 'testResult', cont
     }
 };
 
+
 window.testSample = function (sampleId) {
     window.testEndpoint('/api/e-invoice/sample/' + sampleId);
+};
+
+window.copySchema = async function (event) {
+    try {
+        const response = await fetch('/api/e-invoice/schema');
+        const data = await response.json();
+
+        if (data.success) {
+            const schemaString = JSON.stringify(data.data, null, 2);
+            await navigator.clipboard.writeText(schemaString);
+
+            // Show temporary feedback
+            const btn = event.target.closest('button');
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+            btn.className = 'btn btn-outline-success';
+
+            setTimeout(() => {
+                btn.innerHTML = originalHtml;
+                btn.className = 'btn btn-outline-info';
+            }, 2000);
+        } else {
+            alert('Failed to fetch schema');
+        }
+    } catch (error) {
+        console.error('Error copying schema:', error);
+        alert('Error copying schema');
+    }
+};
+
+window.copyXmlSchema = async function (event) {
+    try {
+        const response = await fetch('/api/e-invoice-xml/schema');
+
+        if (response.ok) {
+            const schemaString = await response.text();
+            await navigator.clipboard.writeText(schemaString);
+
+            // Show temporary feedback
+            const btn = event.target.closest('button');
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+            btn.className = 'btn btn-outline-success';
+
+            setTimeout(() => {
+                btn.innerHTML = originalHtml;
+                btn.className = 'btn btn-outline-info';
+            }, 2000);
+        } else {
+            alert('Failed to fetch XML schema');
+        }
+    } catch (error) {
+        console.error('Error copying XML schema:', error);
+        alert('Error copying XML schema');
+    }
 };
 
 window.copyResult = async function () {

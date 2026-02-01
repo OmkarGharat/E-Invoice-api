@@ -20,6 +20,7 @@ const security = require('./middleware/security');
 // app.use(security.rateLimiter); // Uncomment to enable global rate limiting
 
 // 2. Strict Header Validation for API Routes
+app.use('/api', security.validateMandatoryHeaders);
 app.use('/api', security.validateAccept);
 app.use('/api', security.requireJsonContent);
 
@@ -38,7 +39,7 @@ app.use('/api/e-invoice', (req, res, next) => {
   // but actions like generate/cancel MUST be protected.
 
   // Allow public access to harmless metadata (optional, but good for UI)
-  if (req.path === '/stats' || req.path === '/samples' || req.path === '/filter-options' || req.path.startsWith('/sample/')) {
+  if (req.path === '/stats' || req.path === '/samples' || req.path === '/filter-options' || req.path.startsWith('/sample/') || req.path === '/schema') {
     return next();
   }
 
@@ -170,6 +171,10 @@ app.post('/api/edge-cases/session-fixation', (req, res) => {
 // Import Auth Routes
 const authRoutes = require('./routes/auth');
 app.use('/api/auth', authRoutes);
+
+// Import XML Routes
+const xmlRoutes = require('./routes/xmlInvoice');
+app.use('/api/e-invoice-xml', xmlRoutes);
 
 // Import data generator
 const EInvoiceDataGenerator = require('./utils/dataGenerator');

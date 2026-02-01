@@ -90,8 +90,8 @@ const authMiddleware = {
             });
         }
 
-        if (token !== VALID_BEARER_TOKEN && !token.startsWith("ey") && !token.startsWith("oauth-")) {
-            // Allow our hardcoded test token or look for JWT-like structure
+        if (token !== VALID_BEARER_TOKEN) {
+            // Strict check: Only matching the specific valid token
             return res.status(403).json({
                 success: false,
                 error: 'Access Denied',
@@ -124,8 +124,7 @@ const authMiddleware = {
         }
 
         // Simulate token validation (e.g., expiry, scope)
-        // In this mock, we accept tokens that start with "oauth-"
-        if (!token.startsWith("oauth-") && token !== VALID_BEARER_TOKEN) {
+        if (token !== VALID_BEARER_TOKEN) {
             return res.status(403).json({
                 success: false,
                 error: 'Access Denied',
@@ -206,8 +205,8 @@ const authMiddleware = {
                     return res.status(401).json({ success: false, error: 'Unauthorized', message: 'Token has expired' });
                 }
 
-                // Check Validity (Allow exact match OR simulated valid prefixes)
-                if (token === VALID_BEARER_TOKEN || token.startsWith("ey") || token.startsWith("oauth-")) {
+                // Check Validity
+                if (token === VALID_BEARER_TOKEN) {
                     req.auth = { type: 'Bearer Token', token: token };
                     return next();
                 }

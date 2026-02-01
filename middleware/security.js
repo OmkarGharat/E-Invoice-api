@@ -36,6 +36,20 @@ const securityMiddleware = {
                 });
             }
 
+            // Exception: Allow XML for the specific XML test endpoint
+            if (req.originalUrl && req.originalUrl.includes('/api/e-invoice-xml')) {
+                if (!contentType.toLowerCase().includes('application/json') &&
+                    !contentType.toLowerCase().includes('application/xml') &&
+                    !contentType.toLowerCase().includes('text/xml')) {
+                    return res.status(415).json({
+                        success: false,
+                        error: 'Unsupported Media Type',
+                        message: 'Content-Type must be application/json or application/xml'
+                    });
+                }
+                return next();
+            }
+
             // Wrong Content-Type
             if (!contentType.toLowerCase().includes('application/json')) {
                 return res.status(415).json({
@@ -51,6 +65,11 @@ const securityMiddleware = {
     // 2. Accept Header Control
     validateAccept: (req, res, next) => {
         const accept = req.headers['accept'];
+
+        // Exception: Allow XML for the specific XML test endpoint
+        if (req.originalUrl && req.originalUrl.includes('/api/e-invoice-xml')) {
+            return next();
+        }
 
         // If client explicitly asks for XML (which we don't support)
         if (accept && accept.toLowerCase().includes('application/xml')) {
@@ -118,6 +137,27 @@ const securityMiddleware = {
                 success: false,
                 error: 'Forbidden',
                 message: 'CSRF Validation Failed. Missing or mismatched token (Double Submit Cookie required).'
+            });
+        }
+        next();
+    },
+
+    // 4. Mandatory Headers Check
+    validateMandatoryHeaders: (req, res, next) => {
+        // Skip for OPTIONS (CORS preflight)
+        if (req.method === 'OPTIONS') return next();
+
+        const missing = [];
+        if (req.headers['authorization'] === undefined) missing.push('Authorization');
+        if (req.headers['content-type'] === undefined) missing.push('Content-Type');
+        if (req.headers['accept'] === undefined) missing.push('Accept');
+        if (req.headers['x-api-key'] === undefined) missing.push('x-api-key');
+
+        if (missing.length > 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing Headers',
+                message: `The following headers are mandatory: ${missing.join(', ')}`
             });
         }
         next();

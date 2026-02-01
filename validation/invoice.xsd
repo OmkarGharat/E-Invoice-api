@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema attributeFormDefault="unqualified" elementFormDefault="qualified" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="Invoice">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Version" type="xs:string" />
+        <xs:element name="TranDtls">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="TaxSch" type="xs:string" />
+              <xs:element name="SupTyp" type="xs:string" />
+              <xs:element name="RegRev" type="xs:string" />
+              <xs:element name="IgstOnIntra" type="xs:string" minOccurs="0" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="DocDtls">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Typ" type="xs:string" />
+              <xs:element name="No" type="xs:string" />
+              <xs:element name="Dt" type="xs:string" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="SellerDtls">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Gstin" type="xs:string" />
+              <xs:element name="LglNm" type="xs:string" />
+              <xs:element name="TrdNm" type="xs:string" minOccurs="0" />
+              <xs:element name="Addr1" type="xs:string" minOccurs="0" />
+              <xs:element name="Addr2" type="xs:string" minOccurs="0" />
+              <xs:element name="Loc" type="xs:string" minOccurs="0" />
+              <xs:element name="Pin" type="xs:integer" minOccurs="0" />
+              <xs:element name="Stcd" type="xs:string" />
+              <xs:element name="Ph" type="xs:string" minOccurs="0" />
+              <xs:element name="Em" type="xs:string" minOccurs="0" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="BuyerDtls">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Gstin" type="xs:string" />
+              <xs:element name="LglNm" type="xs:string" />
+              <xs:element name="TrdNm" type="xs:string" minOccurs="0" />
+              <xs:element name="Pos" type="xs:string" />
+              <xs:element name="Addr1" type="xs:string" minOccurs="0" />
+              <xs:element name="Addr2" type="xs:string" minOccurs="0" />
+              <xs:element name="Loc" type="xs:string" minOccurs="0" />
+              <xs:element name="Pin" type="xs:integer" minOccurs="0" />
+              <xs:element name="Stcd" type="xs:string" />
+              <xs:element name="Ph" type="xs:string" minOccurs="0" />
+              <xs:element name="Em" type="xs:string" minOccurs="0" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="ItemList">
+           <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Item" maxOccurs="unbounded">
+                 <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="SlNo" type="xs:string" />
+                    <xs:element name="IsServc" type="xs:string" minOccurs="0" />
+                    <xs:element name="PrdDesc" type="xs:string" />
+                    <xs:element name="HsnCd" type="xs:string" />
+                    <xs:element name="BchDtls" minOccurs="0">
+                      <xs:complexType>
+                        <xs:sequence>
+                          <xs:element name="Nm" type="xs:string" />
+                        </xs:sequence>
+                      </xs:complexType>
+                    </xs:element>
+                    <xs:element name="Qty" type="xs:decimal" />
+                    <xs:element name="Unit" type="xs:string" />
+                    <xs:element name="UnitPrice" type="xs:decimal" />
+                    <xs:element name="TotAmt" type="xs:decimal" />
+                    <xs:element name="AssAmt" type="xs:decimal" />
+                    <xs:element name="GstRt" type="xs:decimal" />
+                    <xs:element name="IgstAmt" type="xs:decimal" />
+                    <xs:element name="CgstAmt" type="xs:decimal" />
+                    <xs:element name="SgstAmt" type="xs:decimal" />
+                    <xs:element name="TotItemVal" type="xs:decimal" />
+                  </xs:sequence>
+                 </xs:complexType>
+              </xs:element>
+            </xs:sequence>
+           </xs:complexType>
+        </xs:element>
+        <xs:element name="ValDtls">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="AssVal" type="xs:decimal" />
+              <xs:element name="CgstVal" type="xs:decimal" />
+              <xs:element name="SgstVal" type="xs:decimal" />
+              <xs:element name="IgstVal" type="xs:decimal" />
+              <xs:element name="TotInvVal" type="xs:decimal" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

@@ -26,7 +26,7 @@ class EInvoiceDataGenerator {
         TranDtls: { TaxSch: "GST", SupTyp: "B2B", RegRev: "N", IgstOnIntra: "N" },
         DocDtls: { Typ: "INV", No: "INV/2024/001", Dt: "01/01/2024" },
         SellerDtls: {
-          Gstin: "29AABCT1332L000", LglNm: "ABC Electronics Pvt Ltd", TrdNm: "ABC Electronics",
+          Gstin: "29AABCT1332L1Z1", LglNm: "ABC Electronics Pvt Ltd", TrdNm: "ABC Electronics",
           Addr1: "Electronics City", Addr2: "Phase 1", Loc: "BANGALORE", Pin: 560100, Stcd: "29",
           Ph: "9876543210", Em: "sales@abcelectronics.com"
         },
@@ -198,7 +198,7 @@ class EInvoiceDataGenerator {
   getSampleDescription(id) {
     const descriptions = {
       1: "B2B Intrastate (CGST + SGST)",
-      2: "B2B Interstate (IGST)", 
+      2: "B2B Interstate (IGST)",
       3: "Export Invoice (Zero Tax)",
       4: "SEZ Supply",
       5: "Reverse Charge",
@@ -218,11 +218,11 @@ class EInvoiceDataGenerator {
     return errors;
   }
 
-    // ADD THIS METHOD - generates multiple invoices
+  // ADD THIS METHOD - generates multiple invoices
   generateMultipleInvoices(count) {
     const invoices = [];
     const supplyTypes = ["B2B", "EXPWP", "SEZWP"];
-    
+
     for (let i = 0; i < count; i++) {
       const randomType = supplyTypes[Math.floor(Math.random() * supplyTypes.length)];
       invoices.push(this.generateInvoice(randomType));
@@ -235,13 +235,13 @@ class EInvoiceDataGenerator {
     // Map scenario names to supply types
     const scenarioMap = {
       "b2b_interstate": "B2B",
-      "b2b_intrastate": "B2B", 
+      "b2b_intrastate": "B2B",
       "export": "EXPWP",
       "sez": "SEZWP",
       "reverse_charge": "B2B",
       "credit_note": "B2B"
     };
-    
+
     const supplyType = scenarioMap[scenario] || "B2B";
     return this.generateInvoice(supplyType);
   }
@@ -250,14 +250,14 @@ class EInvoiceDataGenerator {
     const states = Object.keys(this.states);
     const sellerState = states[Math.floor(Math.random() * states.length)];
     const buyerState = supplyType === "B2B" ? states[Math.floor(Math.random() * states.length)] : sellerState;
-    
+
     const product = this.products[Math.floor(Math.random() * this.products.length)];
     const qty = Math.floor(Math.random() * 10) + 1;
     const price = Math.floor(Math.random() * (product.priceRange[1] - product.priceRange[0])) + product.priceRange[0];
     const total = qty * price;
     const taxRate = 18;
     const tax = (total * taxRate) / 100;
-    
+
     return {
       Version: "1.1",
       TranDtls: { TaxSch: "GST", SupTyp: supplyType, RegRev: "N", IgstOnIntra: "N" },
@@ -278,12 +278,12 @@ class EInvoiceDataGenerator {
         SlNo: "1", IsServc: "N", PrdDesc: product.name, HsnCd: product.hsn,
         Qty: qty, Unit: "NOS", UnitPrice: price, TotAmt: total, AssAmt: total,
         GstRt: taxRate, IgstAmt: sellerState !== buyerState ? tax : 0,
-        CgstAmt: sellerState === buyerState ? tax/2 : 0, SgstAmt: sellerState === buyerState ? tax/2 : 0,
+        CgstAmt: sellerState === buyerState ? tax / 2 : 0, SgstAmt: sellerState === buyerState ? tax / 2 : 0,
         TotItemVal: total + tax
       }],
       ValDtls: {
-        AssVal: total, CgstVal: sellerState === buyerState ? tax/2 : 0,
-        SgstVal: sellerState === buyerState ? tax/2 : 0, IgstVal: sellerState !== buyerState ? tax : 0,
+        AssVal: total, CgstVal: sellerState === buyerState ? tax / 2 : 0,
+        SgstVal: sellerState === buyerState ? tax / 2 : 0, IgstVal: sellerState !== buyerState ? tax : 0,
         TotInvVal: total + tax
       }
     };
