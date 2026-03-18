@@ -2,6 +2,42 @@ const express = require('express');
 const router = express.Router();
 const { authMiddleware, CONSTANTS } = require('../middleware/auth');
 
+// Login-specific rate limiter (stricter than general rate limiter)
+const loginRateLimitStore = {};
+const loginRateLimiter = (req, res, next) => {
+    const ip = req.ip || '127.0.0.1';
+    const now = Date.now();
+    const windowMs = 15 * 60 * 1000; // 15 minute window
+    const limit = 10; // 10 login attempts per 15 minutes
+
+    if (!loginRateLimitStore[ip]) {
+        loginRateLimitStore[ip] = { count: 0, startTime: now };
+    }
+
+    const data = loginRateLimitStore[ip];
+
+    // Reset if window passed
+    if (now - data.startTime > windowMs) {
+        data.count = 0;
+        data.startTime = now;
+    }
+
+    data.count++;
+
+    res.setHeader('X-RateLimit-Limit', limit);
+    res.setHeader('X-RateLimit-Remaining', Math.max(0, limit - data.count));
+
+    if (data.count > limit) {
+        return res.status(429).json({
+            success: false,
+            error: 'Too Many Requests',
+            message: 'Too many login attempts. Please try again later.'
+        });
+    }
+
+    next();
+};
+
 // ==================== AUTHENTICATION PROVIDER ENDPOINTS ====================
 
 // 1. Get API Key Information
@@ -21,8 +57,26 @@ router.get('/credentials', (req, res) => {
 });
 
 // 2. Login (for Bearer/OAuth flow)
-router.post('/login', (req, res) => {
+router.post('/login', loginRateLimiter, (req, res) => {
     const { username, password, grant_type } = req.body;
+
+    // NoSQL injection prevention: ensure inputs are strings
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({
+            success: false,
+            error: 'Bad Request',
+            message: 'Username and password must be strings'
+        });
+    }
+
+    // Reject empty credentials
+    if (!username.trim() || !password.trim()) {
+        return res.status(400).json({
+            success: false,
+            error: 'Bad Request',
+            message: 'Username and password are required'
+        });
+    }
 
     // Simple mock login
     if (username === CONSTANTS.VALID_USERNAME && password === CONSTANTS.VALID_PASSWORD) {

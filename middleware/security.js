@@ -147,17 +147,29 @@ const securityMiddleware = {
         // Skip for OPTIONS (CORS preflight)
         if (req.method === 'OPTIONS') return next();
 
-        const missing = [];
-        if (req.headers['authorization'] === undefined) missing.push('Authorization');
-        if (req.headers['content-type'] === undefined) missing.push('Content-Type');
-        if (req.headers['accept'] === undefined) missing.push('Accept');
-        if (req.headers['x-api-key'] === undefined) missing.push('x-api-key');
+        const missingAuth = [];
+        const missingOther = [];
 
-        if (missing.length > 0) {
+        if (req.headers['authorization'] === undefined) missingAuth.push('Authorization');
+        if (req.headers['x-api-key'] === undefined) missingAuth.push('x-api-key');
+        if (req.headers['content-type'] === undefined) missingOther.push('Content-Type');
+        if (req.headers['accept'] === undefined) missingOther.push('Accept');
+
+        // Auth headers missing → 401 Unauthorized
+        if (missingAuth.length > 0) {
+            return res.status(401).json({
+                success: false,
+                error: 'Unauthorized',
+                message: `Missing authentication headers: ${missingAuth.join(', ')}`
+            });
+        }
+
+        // Other headers missing → 400 Bad Request
+        if (missingOther.length > 0) {
             return res.status(400).json({
                 success: false,
                 error: 'Missing Headers',
-                message: `The following headers are mandatory: ${missing.join(', ')}`
+                message: `The following headers are mandatory: ${missingOther.join(', ')}`
             });
         }
         next();

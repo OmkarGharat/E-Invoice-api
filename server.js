@@ -5,8 +5,17 @@ const path = require('path');
 
 const app = express();
 
-// Middleware
-app.use(cors());
+// CORS Configuration - restrict origins instead of wildcard
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : null; // null = allow all (development mode)
+
+app.use(cors({
+  origin: allowedOrigins || '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'Accept', 'X-CSRF-Token', 'X-Tenant-Id'],
+  credentials: allowedOrigins ? true : false // Only allow credentials with specific origins
+}));
 app.use(bodyParser.json({ limit: '100kb' })); // Limit payload to 100kb to prevent parsing crashes
 
 // Serve static files
@@ -44,7 +53,20 @@ app.use('/api/e-invoice', (req, res, next) => {
   }
 
   // Enforce Universal Auth (API Key, Basic, or Bearer)
-  return authMiddleware.anyAuth(req, res, next);
+  const authResult = authMiddleware.anyAuth(req, res, () => {
+    // After auth passes, enforce write scope for state-changing methods
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      // Check if auth context has scopes (OAuth2 flow)
+      if (req.auth && req.auth.scopes && !req.auth.scopes.includes('write')) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden',
+          message: 'Insufficient permissions. Write scope required for this operation.'
+        });
+      }
+    }
+    next();
+  });
 });
 
 // ==================== EDGE CASE TESTING ENDPOINTS ====================
@@ -143,28 +165,25 @@ app.post('/api/edge-cases/cookie-override', (req, res) => {
 });
 
 // Session Fixation Vulnerability Simulation
-// Accepts a provided session ID (Weak) vs Rotating it (Strong)
+// FIXED: Always generates a new server-side session ID, ignoring client input
 app.post('/api/edge-cases/session-fixation', (req, res) => {
   const providedSession = req.query.session_id || req.body.session_id;
 
-  if (providedSession) {
-    // VULNERABLE BEHAVIOR: Accepting the client's ID
-    res.setHeader('Set-Cookie', `JSESSIONID=${providedSession}; Path=/; HttpOnly`);
-    return res.json({
-      success: true,
-      warning: 'VULNERABLE: Server accepted client-provided session ID',
-      sessionId: providedSession
-    });
-  }
-
-  // SECURE BEHAVIOR: Generating new ID
+  // SECURE BEHAVIOR: Always generate a new session ID, never accept client-provided
   const newId = 'secure-' + Math.random().toString(36).substr(2);
-  res.setHeader('Set-Cookie', `JSESSIONID=${newId}; Path=/; HttpOnly`);
-  res.json({
+  res.setHeader('Set-Cookie', `JSESSIONID=${newId}; Path=/; HttpOnly; SameSite=Strict`);
+
+  const response = {
     success: true,
     type: 'Secure',
     sessionId: newId
-  });
+  };
+
+  if (providedSession) {
+    response.info = 'Client-provided session ID was ignored for security. A new server-generated ID was assigned.';
+  }
+
+  res.json(response);
 });
 
 

@@ -19,7 +19,7 @@ const authMiddleware = {
     apiKey: (req, res, next) => {
         const apiKey = req.headers['x-api-key'] || req.query.api_key;
 
-        if (!apiKey) {
+        if (!apiKey || !apiKey.trim()) {
             return res.status(401).json({
                 success: false,
                 error: 'Authentication Failed',
@@ -52,6 +52,14 @@ const authMiddleware = {
         }
 
         const token = authHeader.split(' ')[1];
+        if (!token || !token.trim()) {
+            return res.status(401).json({
+                success: false,
+                error: 'Authentication Failed',
+                message: 'Empty Basic credentials'
+            });
+        }
+
         const credentials = decodeBase64(token);
         const [username, password] = credentials.split(':');
 
@@ -80,6 +88,15 @@ const authMiddleware = {
         }
 
         const token = authHeader.split(' ')[1];
+
+        // Reject empty/whitespace tokens
+        if (!token || !token.trim()) {
+            return res.status(401).json({
+                success: false,
+                error: 'Authentication Failed',
+                message: 'Empty Bearer Token'
+            });
+        }
 
         // Edge Case: Expired Token
         if (token === "expired-token" || token.includes("expired")) {
@@ -116,6 +133,15 @@ const authMiddleware = {
         }
 
         const token = authHeader.split(' ')[1];
+
+        // Reject empty/whitespace tokens
+        if (!token || !token.trim()) {
+            return res.status(401).json({
+                success: false,
+                error: 'Authentication Failed',
+                message: 'Empty OAuth Token'
+            });
+        }
 
         // Edge Case: Wrong Scope Token
         if (token === "read-only-token") {
@@ -174,7 +200,7 @@ const authMiddleware = {
         const authHeader = req.headers.authorization;
 
         // Strategy 1: API Key
-        if (apiKey) {
+        if (apiKey && apiKey.trim()) {
             if (apiKey === VALID_API_KEY) {
                 req.auth = { type: 'API Key' };
                 return next();
@@ -183,10 +209,13 @@ const authMiddleware = {
         }
 
         // Strategy 2: Authorization Header (Basic or Bearer)
-        if (authHeader) {
+        if (authHeader && authHeader.trim()) {
             if (authHeader.startsWith('Basic ')) {
                 // Validate Basic
                 const token = authHeader.split(' ')[1];
+                if (!token || !token.trim()) {
+                    return res.status(401).json({ success: false, error: 'Authentication Failed', message: 'Empty Basic credentials' });
+                }
                 const credentials = decodeBase64(token);
                 const [username, password] = credentials.split(':');
 
@@ -199,6 +228,11 @@ const authMiddleware = {
             } else if (authHeader.startsWith('Bearer ')) {
                 // Validate Bearer
                 const token = authHeader.split(' ')[1];
+
+                // Reject empty/whitespace tokens
+                if (!token || !token.trim()) {
+                    return res.status(401).json({ success: false, error: 'Authentication Failed', message: 'Empty Bearer Token' });
+                }
 
                 // Check Expiry
                 if (token === "expired-token" || token.includes("expired")) {

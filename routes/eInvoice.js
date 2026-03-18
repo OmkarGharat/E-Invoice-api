@@ -305,6 +305,15 @@ router.get('/invoice/:irn', (req, res) => {
     });
   }
 
+  // IDOR Prevention: Check ownership if auth context exists
+  if (req.auth && invoice.userId && invoice.userId.toString() !== req.auth.user) {
+    return res.status(403).json({
+      success: false,
+      error: 'Forbidden',
+      message: 'You do not have access to this invoice'
+    });
+  }
+
   res.json({
     success: true,
     data: invoice
@@ -324,6 +333,38 @@ router.post('/generate', (req, res) => {
         message: 'Validation failed',
         errors: errors
       });
+    }
+
+    // Validate positive amounts
+    if (invoiceData.ValDtls && invoiceData.ValDtls.TotInvVal !== undefined) {
+      if (invoiceData.ValDtls.TotInvVal <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: ['Amount must be positive: TotInvVal must be greater than 0']
+        });
+      }
+    }
+
+    // Validate item-level amounts
+    if (invoiceData.ItemList && Array.isArray(invoiceData.ItemList)) {
+      for (let i = 0; i < invoiceData.ItemList.length; i++) {
+        const item = invoiceData.ItemList[i];
+        if (item.UnitPrice !== undefined && item.UnitPrice < 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: [`ItemList[${i}].UnitPrice must not be negative`]
+          });
+        }
+        if (item.TotItemVal !== undefined && item.TotItemVal < 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: [`ItemList[${i}].TotItemVal must not be negative`]
+          });
+        }
+      }
     }
 
     // Check payload size
@@ -382,7 +423,7 @@ router.post('/validate', (req, res) => {
     const errors = validateBasicInvoice(invoiceData);
 
     if (errors.length > 0) {
-      return res.json({
+      return res.status(400).json({
         isValid: false,
         errors: errors.map(error => ({ message: error }))
       });
@@ -419,6 +460,19 @@ router.post('/cancel', (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Invoice not found'
+      });
+    }
+
+    // Prevent double cancellation
+    if (invoice.status === 'Cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invoice is already cancelled',
+        data: {
+          irn: irn,
+          status: 'Cancelled',
+          cancelledAt: invoice.cancelledAt
+        }
       });
     }
 

@@ -190,13 +190,13 @@ describe('Authentication Security Suite', () => {
     }); // End of OAuth 2.0 Scenarios
 
     describe('5. Mandatory Headers Security', () => {
-        it('should reject request missing x-api-key', async () => {
+        it('should reject request missing x-api-key with 401', async () => {
             const res = await request(app).get('/api/e-invoice/stats')
                 .set('Content-Type', 'application/json')
                 .set('Accept', 'application/json')
                 .set('Authorization', 'Bearer token');
-            expect(res.statusCode).toEqual(400);
-            expect(res.body.error).toContain('Missing Headers');
+            expect(res.statusCode).toEqual(401);
+            expect(res.body.error).toContain('Unauthorized');
         });
 
         it('should reject request missing Content-Type', async () => {
@@ -225,6 +225,151 @@ describe('Authentication Security Suite', () => {
             const responses = await Promise.all(promises);
             const tooManyRequests = responses.filter(r => r.statusCode === 429);
             expect(tooManyRequests.length).toBeGreaterThan(0);
+        });
+    });
+
+    describe('7. Empty Token Bypass Prevention', () => {
+        const endpoint = '/api/e-invoice/invoices';
+
+        it('should reject empty Bearer token ("Bearer ")', async () => {
+            const res = await request(app)
+                .get(endpoint)
+                .set(getHeaders({ 'Authorization': 'Bearer ', 'x-api-key': '' }));
+            expect(res.statusCode).toEqual(401);
+        });
+
+        it('should reject whitespace-only Bearer token', async () => {
+            const res = await request(app)
+                .get(endpoint)
+                .set(getHeaders({ 'Authorization': 'Bearer    ', 'x-api-key': '' }));
+            expect(res.statusCode).toEqual(401);
+        });
+
+        it('should reject empty API Key header', async () => {
+            const res = await request(app)
+                .get(endpoint)
+                .set(getHeaders({ 'x-api-key': '', 'Authorization': '' }));
+            expect(res.statusCode).toEqual(401);
+        });
+
+        it('should reject whitespace-only API Key', async () => {
+            const res = await request(app)
+                .get(endpoint)
+                .set(getHeaders({ 'x-api-key': '   ', 'Authorization': '' }));
+            expect(res.statusCode).toEqual(401);
+        });
+    });
+
+    describe('8. NoSQL Injection Prevention', () => {
+        it('should reject object-type username in login', async () => {
+            const res = await request(app)
+                .post('/api/auth/login')
+                .set(getHeaders())
+                .send({ username: { "$gt": "" }, password: "anything" });
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.message).toMatch(/strings/i);
+        });
+
+        it('should reject object-type password in login', async () => {
+            const res = await request(app)
+                .post('/api/auth/login')
+                .set(getHeaders())
+                .send({ username: "admin", password: { "$gt": "" } });
+            expect(res.statusCode).toEqual(400);
+        });
+
+        it('should reject empty username in login', async () => {
+            const res = await request(app)
+                .post('/api/auth/login')
+                .set(getHeaders())
+                .send({ username: "", password: "anything" });
+            expect(res.statusCode).toEqual(400);
+        });
+    });
+
+    describe('9. Cancel Endpoint Logic', () => {
+        it('should reject cancelling an already-cancelled invoice', async () => {
+            // First, generate an invoice
+            const sampleRes = await request(app)
+                .get('/api/e-invoice/sample')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }));
+
+            const generateRes = await request(app)
+                .post('/api/e-invoice/generate')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
+                .send(sampleRes.body.data);
+
+            const irn = generateRes.body.data?.Irn;
+            if (!irn) return; // Skip if generation failed
+
+            // Cancel it once
+            const cancelRes1 = await request(app)
+                .post('/api/e-invoice/cancel')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
+                .send({ irn, cancelReason: 'Test' });
+            expect(cancelRes1.statusCode).toEqual(200);
+
+            // Try to cancel again — should fail
+            const cancelRes2 = await request(app)
+                .post('/api/e-invoice/cancel')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
+                .send({ irn, cancelReason: 'Test again' });
+            expect(cancelRes2.statusCode).toEqual(400);
+            expect(cancelRes2.body.message).toMatch(/already cancelled/i);
+        });
+
+        it('should return 404 for non-existent IRN', async () => {
+            const res = await request(app)
+                .post('/api/e-invoice/cancel')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
+                .send({ irn: 'NONEXISTENT_IRN_12345', cancelReason: 'Test' });
+            expect(res.statusCode).toEqual(404);
+        });
+    });
+
+    describe('10. Input Validation', () => {
+        it('should reject negative TotInvVal in generate', async () => {
+            const invalidInvoice = {
+                Version: '1.1',
+                TranDtls: { SupTyp: 'B2B', RegRev: 'N' },
+                DocDtls: { Typ: 'INV', No: 'INV/TEST/001', Dt: '18/03/2026' },
+                SellerDtls: { Gstin: '29AABCU9603R1ZJ', LglNm: 'Test Seller', Stcd: '29' },
+                BuyerDtls: { Gstin: '27AABCU9603R1ZH', LglNm: 'Test Buyer', Stcd: '27', Pos: '27' },
+                ItemList: [{
+                    SlNo: '1', PrdDesc: 'Test', HsnCd: '1001',
+                    Qty: 1, Unit: 'NOS', UnitPrice: 100, TotAmt: 100,
+                    AssAmt: 100, GstRt: 18, IgstAmt: 18, CgstAmt: 0, SgstAmt: 0, TotItemVal: 118
+                }],
+                ValDtls: { AssVal: 100, CgstVal: 0, SgstVal: 0, IgstVal: 18, TotInvVal: -500 }
+            };
+
+            const res = await request(app)
+                .post('/api/e-invoice/generate')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
+                .send(invalidInvoice);
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.errors[0]).toMatch(/positive/i);
+        });
+
+        it('should return 400 for invalid data in validate endpoint', async () => {
+            const res = await request(app)
+                .post('/api/e-invoice/validate')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
+                .send({ invalid: 'data' });
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.isValid).toBe(false);
+        });
+    });
+
+    describe('11. Session Fixation Fix', () => {
+        it('should ignore client-provided session ID', async () => {
+            const res = await request(app)
+                .post('/api/edge-cases/session-fixation?session_id=attacker123')
+                .set(getHeaders());
+            expect(res.statusCode).toEqual(200);
+            expect(res.body.sessionId).not.toEqual('attacker123');
+            expect(res.body.sessionId).toMatch(/^secure-/);
+            expect(res.body.info).toMatch(/ignored/i);
         });
     });
 });
