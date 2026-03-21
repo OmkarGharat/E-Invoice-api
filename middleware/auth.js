@@ -8,7 +8,7 @@ const VALID_API_KEY = "ei_demo_8x92m3c7-4j5k-2h1g-9s8d-7f6g5h4j3k2l";
 const VALID_USERNAME = "einvoice_sys_admin";
 const VALID_PASSWORD = "SecurePass!@#2024";
 // Realistic looking JWT (Header.Payload.Signature)
-const VALID_BEARER_TOKEN = "eyJhGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlByb2RBZG1pbiIsImlhdCI6MTUxNjIzOTAyMn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+const VALID_BEARER_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlByb2RBZG1pbiIsImlhdCI6MTUxNjIzOTAyMn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
 const MOCK_JWT_SECRET = "production-secret-key-do-not-reveal";
 
 // Helper to decode Base64

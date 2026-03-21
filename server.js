@@ -29,9 +29,30 @@ const security = require('./middleware/security');
 // app.use(security.rateLimiter); // Uncomment to enable global rate limiting
 
 // 2. Strict Header Validation for API Routes
-app.use('/api', security.validateMandatoryHeaders);
-app.use('/api', security.validateAccept);
-app.use('/api', security.requireJsonContent);
+// IMPORTANT: Exempt auth, edge-cases, and CSRF routes so they can handle their own validation
+const exemptFromMandatoryHeaders = ['/api/auth', '/api/edge-cases', '/api/csrf-token'];
+
+app.use('/api', (req, res, next) => {
+  // Skip mandatory header checks for exempt routes
+  if (exemptFromMandatoryHeaders.some(prefix => req.originalUrl.startsWith(prefix))) {
+    return next();
+  }
+  security.validateMandatoryHeaders(req, res, next);
+});
+
+app.use('/api', (req, res, next) => {
+  if (exemptFromMandatoryHeaders.some(prefix => req.originalUrl.startsWith(prefix))) {
+    return next();
+  }
+  security.validateAccept(req, res, next);
+});
+
+app.use('/api', (req, res, next) => {
+  if (exemptFromMandatoryHeaders.some(prefix => req.originalUrl.startsWith(prefix))) {
+    return next();
+  }
+  security.requireJsonContent(req, res, next);
+});
 
 // Import Auth Middleware
 const { authMiddleware } = require('./middleware/auth');
@@ -730,13 +751,17 @@ app.get('/api/e-invoice/fields', (req, res) => {
 // Get statistics
 app.get('/api/e-invoice/stats', (req, res) => {
   try {
+    const activeInvoices = invoices.filter(inv => inv.status === 'Generated');
+    const cancelledInvoices = invoices.filter(inv => inv.status === 'Cancelled');
+
     const stats = {
       totalInvoices: invoices.length,
-      generated: invoices.filter(inv => inv.status === 'Generated').length,
-      cancelled: invoices.filter(inv => inv.status === 'Cancelled').length,
+      generated: activeInvoices.length,
+      cancelled: cancelledInvoices.length,
       bySupplyType: {},
       byState: {},
-      totalValue: invoices.reduce((sum, inv) => sum + inv.invoiceData.ValDtls.TotInvVal, 0)
+      totalValue: activeInvoices.reduce((sum, inv) => sum + inv.invoiceData.ValDtls.TotInvVal, 0),
+      cancelledValue: cancelledInvoices.reduce((sum, inv) => sum + inv.invoiceData.ValDtls.TotInvVal, 0)
     };
 
     invoices.forEach(inv => {

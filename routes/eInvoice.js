@@ -293,6 +293,39 @@ router.get('/invoices', (req, res) => {
   });
 });
 
+// Get invoice by numeric ID
+router.get('/invoices/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid invoice ID. Must be a number.'
+    });
+  }
+
+  const invoice = generatedInvoices.find(inv => inv.id === id);
+  if (!invoice) {
+    return res.status(404).json({
+      success: false,
+      message: `Invoice with ID ${id} not found`
+    });
+  }
+
+  // IDOR Prevention: Check ownership if auth context exists
+  if (req.auth && invoice.userId && invoice.userId.toString() !== req.auth.user) {
+    return res.status(403).json({
+      success: false,
+      error: 'Forbidden',
+      message: 'You do not have access to this invoice'
+    });
+  }
+
+  res.json({
+    success: true,
+    data: invoice
+  });
+});
+
 // Get invoice by IRN
 router.get('/invoice/:irn', (req, res) => {
   const { irn } = req.params;
@@ -658,13 +691,17 @@ router.get('/test-scenarios', (req, res) => {
 
 // Get statistics
 router.get('/stats', (req, res) => {
+  const activeInvoices = generatedInvoices.filter(inv => inv.status === 'Generated');
+  const cancelledInvoices = generatedInvoices.filter(inv => inv.status === 'Cancelled');
+
   const stats = {
     totalInvoices: generatedInvoices.length,
-    generated: generatedInvoices.filter(inv => inv.status === 'Generated').length,
-    cancelled: generatedInvoices.filter(inv => inv.status === 'Cancelled').length,
+    generated: activeInvoices.length,
+    cancelled: cancelledInvoices.length,
     bySupplyType: {},
     byState: {},
-    totalValue: generatedInvoices.reduce((sum, inv) => sum + inv.invoiceData.ValDtls.TotInvVal, 0)
+    totalValue: activeInvoices.reduce((sum, inv) => sum + inv.invoiceData.ValDtls.TotInvVal, 0),
+    cancelledValue: cancelledInvoices.reduce((sum, inv) => sum + inv.invoiceData.ValDtls.TotInvVal, 0)
   };
 
   generatedInvoices.forEach(inv => {

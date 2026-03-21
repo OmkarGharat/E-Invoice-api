@@ -249,7 +249,13 @@ async function loadStats() {
         }
 
         // Load additional stats
-        const statsResponse = await fetch('/api/e-invoice/stats');
+        const statsHeaders = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': 'Bearer ' + (APP_CREDENTIALS.token || 'demo-token'),
+            'x-api-key': APP_CREDENTIALS.apiKey || 'ei_demo_8x92m3c7-4j5k-2h1g-9s8d-7f6g5h4j3k2l'
+        };
+        const statsResponse = await fetch('/api/e-invoice/stats', { headers: statsHeaders });
         if (statsResponse.ok) {
             const statsData = await statsResponse.json();
 
@@ -514,7 +520,10 @@ window.authLogin = async function (grantType) {
     try {
         const response = await fetch('/api/auth/login', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
             body: JSON.stringify(body)
         });
 
@@ -590,7 +599,10 @@ window.testEdge = async function (type) {
             options = {
                 method: 'GET',
                 headers: {
-                    'Accept': 'application/xml' // Fail
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/xml', // Intentionally wrong — should get 406
+                    'Authorization': 'Bearer ' + (APP_CREDENTIALS.token || 'demo-token'),
+                    'x-api-key': APP_CREDENTIALS.apiKey || 'ei_demo_8x92m3c7-4j5k-2h1g-9s8d-7f6g5h4j3k2l'
                 }
             };
         }
@@ -602,7 +614,11 @@ window.testEdge = async function (type) {
             endpoint = '/api/edge-cases/conditional-auth?type=guest';
             options = {
                 method: 'GET',
-                headers: { 'Authorization': 'Bearer unexpected-token' }
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'Authorization': 'Bearer unexpected-token'
+                }
             };
         }
 
@@ -756,14 +772,13 @@ window.testEdge = async function (type) {
             }
         }
         else if (type === 'sessionFixation') {
-            if (data.warning && data.warning.includes('VULNERABLE')) {
-                // We WANTED to simulate the attack, so getting "VULNERABLE" confirmation is technically a "PASS" of the simulation,
-                // but visually it might be better to show it as a Warning.
+            if (data.info && data.info.includes('ignored')) {
+                // Server correctly rejected client-provided session ID
                 if (badge) {
-                    badge.className = 'badge bg-warning text-dark';
-                    badge.textContent = `SIMULATED VULNERABILITY`;
+                    badge.className = 'badge bg-success';
+                    badge.textContent = `SECURE — Session ID regenerated`;
                 }
-                testResult.querySelector('.card').className = 'card bg-dark border-warning';
+                testResult.querySelector('.card').className = 'card bg-dark border-success';
             } else {
                 if (badge) {
                     badge.className = 'badge bg-success';
