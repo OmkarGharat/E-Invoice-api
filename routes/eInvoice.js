@@ -463,6 +463,15 @@ router.post('/cancel', (req, res) => {
       });
     }
 
+    // IDOR Prevention: Check ownership on cancel (same as GET /invoice/:irn)
+    if (req.auth && invoice.userId && invoice.userId.toString() !== req.auth.user) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'You do not have access to cancel this invoice'
+      });
+    }
+
     // Prevent double cancellation
     if (invoice.status === 'Cancelled') {
       return res.status(400).json({
