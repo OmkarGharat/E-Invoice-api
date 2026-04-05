@@ -147,22 +147,21 @@ const securityMiddleware = {
         // Skip for OPTIONS (CORS preflight)
         if (req.method === 'OPTIONS') return next();
 
-        const missingAuth = [];
+        const hasAuthorization = req.headers['authorization'] !== undefined;
+        const hasApiKey = req.headers['x-api-key'] !== undefined || req.query.api_key !== undefined;
         const missingOther = [];
 
-        if (req.headers['authorization'] === undefined) missingAuth.push('Authorization');
-        if (req.headers['x-api-key'] === undefined) missingAuth.push('x-api-key');
-        if (req.headers['content-type'] === undefined) missingOther.push('Content-Type');
-        if (req.headers['accept'] === undefined) missingOther.push('Accept');
-
-        // Auth headers missing → 401 Unauthorized
-        if (missingAuth.length > 0) {
+        // At least ONE auth mechanism must be present (API Key OR Authorization header)
+        if (!hasAuthorization && !hasApiKey) {
             return res.status(401).json({
                 success: false,
                 error: 'Unauthorized',
-                message: `Missing authentication headers: ${missingAuth.join(', ')}`
+                message: 'Missing authentication: Provide either Authorization header, x-api-key header, or api_key query parameter'
             });
         }
+
+        if (req.headers['content-type'] === undefined) missingOther.push('Content-Type');
+        if (req.headers['accept'] === undefined) missingOther.push('Accept');
 
         // Other headers missing → 400 Bad Request
         if (missingOther.length > 0) {

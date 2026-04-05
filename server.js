@@ -507,6 +507,16 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Reject non-GET methods on /health with 405
+app.all('/health', (req, res) => {
+  res.status(405).json({
+    success: false,
+    error: 'Method Not Allowed',
+    message: `${req.method} is not allowed on /health. Use GET instead.`,
+    allowedMethods: ['GET']
+  });
+});
+
 // Get all invoices with generic filtering
 app.get('/api/e-invoice/invoices', (req, res) => {
   try {
