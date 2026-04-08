@@ -528,13 +528,128 @@ app.get('/api/e-invoice/invoices', (req, res) => {
     const validLimit = Math.min(100, Math.max(1, parseInt(limit)));
     const validSortOrder = ['asc', 'desc'].includes(sortOrder) ? sortOrder : 'desc';
 
-    // Apply generic filtering
-    let filteredData = filter.apply(invoices, filters);
+    // ------------------------------------------------------------------
+    // Map user-friendly query param names → actual nested data paths
+    // ------------------------------------------------------------------
+    const fieldMapping = {
+      supplyType:    'invoiceData.TranDtls.SupTyp',
+      documentType:  'invoiceData.DocDtls.Typ',
+      sellerState:   'invoiceData.SellerDtls.Stcd',
+      buyerState:    'invoiceData.BuyerDtls.Stcd',
+      totalValue:    'invoiceData.ValDtls.TotInvVal',
+      sellerGstin:   'invoiceData.SellerDtls.Gstin',
+      buyerGstin:    'invoiceData.BuyerDtls.Gstin',
+      invoiceNo:     'invoiceData.DocDtls.No',
+      // status & search are top-level / special — no mapping needed
+    };
 
-    // Apply sorting
-    filteredData = filter.sort(filteredData, sortBy, validSortOrder);
+    // ------------------------------------------------------------------
+    // Extract special filters that need custom logic (not generic path matching)
+    // ------------------------------------------------------------------
+    const specialKeys = [
+      'dateFrom', 'dateTo', 'minValue', 'maxValue',
+      'interstate', 'reverseCharge',
+      'supplyTypes', 'statuses'
+    ];
 
-    // Apply pagination
+    const genericFilters = {};
+    Object.keys(filters).forEach(key => {
+      if (!specialKeys.includes(key)) {
+        genericFilters[key] = filters[key];
+      }
+    });
+
+    // ------------------------------------------------------------------
+    // 1. Apply generic filters (exact match, gt:/lt:, comma-separated, search, etc.)
+    // ------------------------------------------------------------------
+    let filteredData = filter.apply(invoices, genericFilters, fieldMapping);
+
+    // ------------------------------------------------------------------
+    // 2. Apply special filters that GenericFilter cannot handle
+    // ------------------------------------------------------------------
+
+    // supplyTypes (plural, comma-separated) → OR match on SupTyp
+    if (filters.supplyTypes) {
+      const types = filters.supplyTypes.split(',').map(t => t.trim());
+      filteredData = filteredData.filter(inv =>
+        types.includes(inv.invoiceData.TranDtls.SupTyp)
+      );
+    }
+
+    // statuses (plural, comma-separated) → OR match on status
+    if (filters.statuses) {
+      const statuses = filters.statuses.split(',').map(s => s.trim());
+      filteredData = filteredData.filter(inv =>
+        statuses.includes(inv.status)
+      );
+    }
+
+    // dateFrom / dateTo → filter on generatedAt
+    if (filters.dateFrom || filters.dateTo) {
+      const from = filters.dateFrom ? new Date(filters.dateFrom) : new Date(0);
+      const to   = filters.dateTo   ? new Date(filters.dateTo)   : new Date('2999-12-31');
+      // Set 'to' to end of day so dateTo is inclusive
+      to.setHours(23, 59, 59, 999);
+      filteredData = filteredData.filter(inv => {
+        const d = new Date(inv.generatedAt);
+        return d >= from && d <= to;
+      });
+    }
+
+    // minValue / maxValue → filter on TotInvVal
+    if (filters.minValue !== undefined) {
+      const min = parseFloat(filters.minValue);
+      if (!isNaN(min)) {
+        filteredData = filteredData.filter(inv =>
+          inv.invoiceData.ValDtls.TotInvVal >= min
+        );
+      }
+    }
+    if (filters.maxValue !== undefined) {
+      const max = parseFloat(filters.maxValue);
+      if (!isNaN(max)) {
+        filteredData = filteredData.filter(inv =>
+          inv.invoiceData.ValDtls.TotInvVal <= max
+        );
+      }
+    }
+
+    // interstate=true|false → computed: sellerState !== BuyerDtls.Pos
+    if (filters.interstate !== undefined) {
+      const wantInterstate = filters.interstate === 'true';
+      filteredData = filteredData.filter(inv => {
+        const isInterstate = inv.invoiceData.SellerDtls.Stcd !== inv.invoiceData.BuyerDtls.Pos;
+        return isInterstate === wantInterstate;
+      });
+    }
+
+    // reverseCharge=true|false → computed: RegRev === 'Y'
+    if (filters.reverseCharge !== undefined) {
+      const wantRC = filters.reverseCharge === 'true';
+      filteredData = filteredData.filter(inv => {
+        const isRC = inv.invoiceData.TranDtls.RegRev === 'Y';
+        return isRC === wantRC;
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // 3. Sorting
+    // ------------------------------------------------------------------
+    // Map user-friendly sort fields to actual nested paths
+    const sortFieldMapping = {
+      totalValue:   'invoiceData.ValDtls.TotInvVal',
+      supplyType:   'invoiceData.TranDtls.SupTyp',
+      documentType: 'invoiceData.DocDtls.Typ',
+      sellerState:  'invoiceData.SellerDtls.Stcd',
+      buyerState:   'invoiceData.BuyerDtls.Stcd',
+      invoiceNo:    'invoiceData.DocDtls.No',
+    };
+    const actualSortBy = sortFieldMapping[sortBy] || sortBy;
+    filteredData = filter.sort(filteredData, actualSortBy, validSortOrder);
+
+    // ------------------------------------------------------------------
+    // 4. Pagination
+    // ------------------------------------------------------------------
     const paginated = filter.paginate(filteredData, validPage, validLimit);
 
     // Format response
@@ -726,7 +841,7 @@ app.get('/api/e-invoice/fields', (req, res) => {
           greaterThan: 'field=gt:value',
           equalTo: 'field=eq:value',
           notEqualTo: 'field=ne:value',
-          dateRange: 'dateField=2024-01-01:2024-12-31',
+          dateRange: 'dateField=2024-01-01:2026-12-31',
           boolean: 'field=true or field=false',
           search: 'search=term'
         },
@@ -735,7 +850,7 @@ app.get('/api/e-invoice/fields', (req, res) => {
             exact: '/invoices?status=Generated',
             multiple: '/invoices?supplyType=B2B,EXPWP',
             range: '/invoices?totalValue=lt:100000',
-            date: '/invoices?generatedAt=2024-01-01:2024-12-31',
+            date: '/invoices?generatedAt=2024-01-01:2026-12-31',
             nested: '/invoices?invoiceData.TranDtls.SupTyp=B2B',
             combined: '/invoices?status=Generated&supplyType=B2B&totalValue=gt:50000'
           },

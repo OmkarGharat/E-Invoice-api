@@ -191,6 +191,29 @@ class EInvoiceDataGenerator {
           }
         ],
         ValDtls: { AssVal: 160000, CgstVal: 10200, SgstVal: 10200, IgstVal: 0, TotInvVal: 180400 }
+      },
+      
+      // Sample 8: Mid-value Invoice (1000 to 10000) with Delhi Buyer (07)
+      8: {
+        Version: "1.1",
+        TranDtls: { TaxSch: "GST", SupTyp: "B2B", RegRev: "N", IgstOnIntra: "N" },
+        DocDtls: { Typ: "INV", No: "INV/2024/008", Dt: "10/05/2024" },
+        SellerDtls: {
+          Gstin: "29AABCT1332L000", LglNm: "Tech Supplier Inc",
+          Addr1: "Tech Park", Loc: "BANGALORE", Pin: 560001, Stcd: "29",
+          Ph: "9876543223", Em: "sales@techsupplier.com"
+        },
+        BuyerDtls: {
+          Gstin: "07AWGPV7107B1Z1", LglNm: "Delhi Retailers", Pos: "07",
+          Addr1: "Connaught Place", Loc: "NEW DELHI", Pin: 110001, Stcd: "07",
+          Ph: "9876543224", Em: "orders@delhiretailers.com"
+        },
+        ItemList: [{
+          SlNo: "1", IsServc: "N", PrdDesc: "Wireless Mouse", HsnCd: "84716060",
+          Qty: 5, Unit: "NOS", UnitPrice: 1000, TotAmt: 5000, AssAmt: 5000,
+          GstRt: 18, IgstAmt: 900, CgstAmt: 0, SgstAmt: 0, TotItemVal: 5900
+        }],
+        ValDtls: { AssVal: 5000, CgstVal: 0, SgstVal: 0, IgstVal: 900, TotInvVal: 5900 }
       }
     };
   }
@@ -203,7 +226,8 @@ class EInvoiceDataGenerator {
       4: "SEZ Supply",
       5: "Reverse Charge",
       6: "Credit Note",
-      7: "Multiple Items"
+      7: "Multiple Items",
+      8: "Mid-value with Delhi Buyer (07)"
     };
     return descriptions[id] || "Sample Invoice";
   }
