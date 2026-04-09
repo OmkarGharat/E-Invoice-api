@@ -566,6 +566,113 @@ app.get('/api/e-invoice/invoices', (req, res) => {
     const validSortOrder = sortOrder;
 
     // ------------------------------------------------------------------
+    // Validate enum/filter values — reject invalid values with 400
+    // ------------------------------------------------------------------
+    const VALID_STATUSES = ['Generated', 'Cancelled'];
+    const VALID_SUPPLY_TYPES = ['B2B', 'EXPWP', 'EXPWOP', 'SEZWP', 'SEZWOP', 'DEXP'];
+    const VALID_DOC_TYPES = ['INV', 'CRN', 'DBN'];
+
+    if (filters.status && !VALID_STATUSES.includes(filters.status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid status: '${filters.status}'. Valid values: ${VALID_STATUSES.join(', ')}`
+      });
+    }
+
+    if (filters.supplyType && !VALID_SUPPLY_TYPES.includes(filters.supplyType)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid supplyType: '${filters.supplyType}'. Valid values: ${VALID_SUPPLY_TYPES.join(', ')}`
+      });
+    }
+
+    if (filters.documentType && !VALID_DOC_TYPES.includes(filters.documentType)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid documentType: '${filters.documentType}'. Valid values: ${VALID_DOC_TYPES.join(', ')}`
+      });
+    }
+
+    // Validate plural comma-separated enums
+    if (filters.supplyTypes) {
+      const types = filters.supplyTypes.split(',').map(t => t.trim());
+      const invalid = types.filter(t => !VALID_SUPPLY_TYPES.includes(t));
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: `Invalid supplyTypes: '${invalid.join(', ')}'. Valid values: ${VALID_SUPPLY_TYPES.join(', ')}`
+        });
+      }
+    }
+
+    if (filters.statuses) {
+      const statuses = filters.statuses.split(',').map(s => s.trim());
+      const invalid = statuses.filter(s => !VALID_STATUSES.includes(s));
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: `Invalid statuses: '${invalid.join(', ')}'. Valid values: ${VALID_STATUSES.join(', ')}`
+        });
+      }
+    }
+
+    // Validate boolean filters
+    if (filters.interstate !== undefined && !['true', 'false'].includes(filters.interstate)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid interstate value: '${filters.interstate}'. Must be 'true' or 'false'.`
+      });
+    }
+
+    if (filters.reverseCharge !== undefined && !['true', 'false'].includes(filters.reverseCharge)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid reverseCharge value: '${filters.reverseCharge}'. Must be 'true' or 'false'.`
+      });
+    }
+
+    // Validate numeric range filters
+    if (filters.minValue !== undefined && isNaN(parseFloat(filters.minValue))) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid minValue: '${filters.minValue}'. Must be a number.`
+      });
+    }
+
+    if (filters.maxValue !== undefined && isNaN(parseFloat(filters.maxValue))) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid maxValue: '${filters.maxValue}'. Must be a number.`
+      });
+    }
+
+    // Validate date filters
+    if (filters.dateFrom !== undefined && isNaN(new Date(filters.dateFrom).getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid dateFrom: '${filters.dateFrom}'. Must be a valid date (e.g., 2024-01-01).`
+      });
+    }
+
+    if (filters.dateTo !== undefined && isNaN(new Date(filters.dateTo).getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid dateTo: '${filters.dateTo}'. Must be a valid date (e.g., 2024-12-31).`
+      });
+    }
+
+    // ------------------------------------------------------------------
     // Map user-friendly query param names → actual nested data paths
     // ------------------------------------------------------------------
     const fieldMapping = {
