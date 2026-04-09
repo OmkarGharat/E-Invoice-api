@@ -523,10 +523,47 @@ app.get('/api/e-invoice/invoices', (req, res) => {
     // Parse query parameters
     const { page = 1, limit = 10, sortBy = 'generatedAt', sortOrder = 'desc', ...filters } = req.query;
 
-    // Validate parameters
-    const validPage = Math.max(1, parseInt(page));
-    const validLimit = Math.min(100, Math.max(1, parseInt(limit)));
-    const validSortOrder = ['asc', 'desc'].includes(sortOrder) ? sortOrder : 'desc';
+    // ------------------------------------------------------------------
+    // Input validation — reject invalid pagination/sorting params with 400
+    // ------------------------------------------------------------------
+    const parsedPage = parseInt(page);
+    const parsedLimit = parseInt(limit);
+
+    if (isNaN(parsedPage) || parsedPage < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid page value: '${page}'. Must be a positive integer (1 or greater).`
+      });
+    }
+
+    if (isNaN(parsedLimit) || parsedLimit < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid limit value: '${limit}'. Must be a positive integer (1-100).`
+      });
+    }
+
+    if (parsedLimit > 100) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Limit value '${limit}' exceeds maximum of 100.`
+      });
+    }
+
+    if (!['asc', 'desc'].includes(sortOrder)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid sortOrder: '${sortOrder}'. Must be 'asc' or 'desc'.`
+      });
+    }
+
+    const validPage = parsedPage;
+    const validLimit = parsedLimit;
+    const validSortOrder = sortOrder;
 
     // ------------------------------------------------------------------
     // Map user-friendly query param names → actual nested data paths
