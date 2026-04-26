@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
+const { validateField } = require('./validation/regexPatterns');
 
 const app = express();
 
@@ -670,6 +671,64 @@ app.get('/api/e-invoice/invoices', (req, res) => {
         error: 'Bad Request',
         message: `Invalid dateTo: '${filters.dateTo}'. Must be a valid date (e.g., 2024-12-31).`
       });
+    }
+
+    // ------------------------------------------------------------------
+    // Regex validation for GSTIN, state codes, and document number filters
+    // ------------------------------------------------------------------
+    if (filters.sellerGstin) {
+      const r = validateField('Gstin', filters.sellerGstin);
+      if (!r.valid) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: `Invalid sellerGstin: '${filters.sellerGstin}'. ${r.message}`
+        });
+      }
+    }
+
+    if (filters.buyerGstin) {
+      const r = validateField('BuyerGstin', filters.buyerGstin);
+      if (!r.valid) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: `Invalid buyerGstin: '${filters.buyerGstin}'. ${r.message}`
+        });
+      }
+    }
+
+    if (filters.sellerState) {
+      const r = validateField('Stcd', filters.sellerState);
+      if (!r.valid) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: `Invalid sellerState: '${filters.sellerState}'. ${r.message}`
+        });
+      }
+    }
+
+    if (filters.buyerState) {
+      const r = validateField('Stcd', filters.buyerState);
+      if (!r.valid) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: `Invalid buyerState: '${filters.buyerState}'. ${r.message}`
+        });
+      }
+    }
+
+    if (filters.invoiceNo) {
+      const r = validateField('DocNo', filters.invoiceNo);
+      if (!r.valid) {
+        return res.status(400).json({
+          success: false,
+          error: 'Bad Request',
+          message: `Invalid invoiceNo: '${filters.invoiceNo}'. ${r.message}`
+        });
+      }
     }
 
     // ------------------------------------------------------------------

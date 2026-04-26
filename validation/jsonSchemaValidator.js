@@ -7,36 +7,44 @@ const INVOICE_SCHEMA = {
             type: "object",
             required: ["SupTyp", "RegRev"],
             properties: {
-                SupTyp: { type: "string", enum: ["B2B", "SEZWP", "SEZWOP", "EXPWP", "EXPWOP", "DEXP"] },
-                RegRev: { type: "string", enum: ["Y", "N"] }
+                TaxSch: { type: "string", pattern: "^(GST)$" },
+                SupTyp: { type: "string", pattern: "^(B2B|SEZWP|SEZWOP|EXPWP|EXPWOP|DEXP)$" },
+                RegRev: { type: "string", pattern: "^[YN]$" },
+                EcmGstin: { type: "string", pattern: "^([0-9]{2}[0-9A-Z]{13})$" },
+                IgstOnIntra: { type: "string", pattern: "^[YN]$" }
             }
         },
         DocDtls: {
             type: "object",
             required: ["Typ", "No", "Dt"],
             properties: {
-                Typ: { type: "string", enum: ["INV", "CRN", "DBN"] },
-                No: { type: "string" },
-                Dt: { type: "string" }
+                Typ: { type: "string", pattern: "^(INV|CRN|DBN)$" },
+                No: { type: "string", pattern: "^([a-zA-Z1-9]{1}[a-zA-Z0-9\\/-]{0,15})$" },
+                Dt: { type: "string", pattern: "^(0[1-9]|[12][0-9]|3[01])/(0[1-9]|1[0-2])/\\d{4}$" }
             }
         },
         SellerDtls: {
             type: "object",
             required: ["Gstin", "LglNm", "Stcd"],
             properties: {
-                Gstin: { type: "string", pattern: "^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$" }, // Basic GSTIN regex
-                LglNm: { type: "string" },
-                Stcd: { type: "string" }
+                Gstin: { type: "string", pattern: "^([0-9]{2}[0-9A-Z]{13})$" },
+                LglNm: { type: "string", minLength: 3, maxLength: 100 },
+                Addr1: { type: "string", minLength: 1, maxLength: 100 },
+                Loc: { type: "string", minLength: 3, maxLength: 50 },
+                Pin: { type: "number", minimum: 100000, maximum: 999999 },
+                Stcd: { type: "string", pattern: "^([1-9]|[0-9]{2})$" }
             }
         },
         BuyerDtls: {
             type: "object",
             required: ["Gstin", "LglNm", "Stcd", "Pos"],
             properties: {
-                Gstin: { type: "string" },
-                LglNm: { type: "string" },
-                Stcd: { type: "string" },
-                Pos: { type: "string" }
+                Gstin: { type: "string", pattern: "^(URP|[0-9]{2}[0-9A-Z]{13})$" },
+                LglNm: { type: "string", minLength: 3, maxLength: 100 },
+                Pos: { type: "string", pattern: "^([1-9]|[0-9]{2})$" },
+                Addr1: { type: "string", minLength: 1, maxLength: 100 },
+                Loc: { type: "string", minLength: 3, maxLength: 50 },
+                Stcd: { type: "string", pattern: "^([1-9]|[0-9]{2})$" }
             }
         },
         ItemList: {
@@ -47,9 +55,10 @@ const INVOICE_SCHEMA = {
                 type: "object",
                 required: ["SlNo", "PrdDesc", "HsnCd", "Qty", "Unit", "UnitPrice", "TotAmt", "AssAmt", "GstRt", "IgstAmt", "CgstAmt", "SgstAmt", "TotItemVal"],
                 properties: {
-                    SlNo: { type: "string" },
-                    PrdDesc: { type: "string" },
-                    HsnCd: { type: "string" },
+                    SlNo: { type: "string", pattern: "^[0-9]{1,6}$" },
+                    IsServc: { type: "string", pattern: "^[YN]$" },
+                    PrdDesc: { type: "string", minLength: 3, maxLength: 300 },
+                    HsnCd: { type: "string", pattern: "^[0-9]{4,8}$" },
                     Qty: { type: "number" },
                     Unit: { type: "string" },
                     UnitPrice: { type: "number" },
@@ -117,6 +126,24 @@ function validateSchema(data, schema, path = 'root') {
             const regex = new RegExp(schema.pattern);
             if (!regex.test(data)) {
                 errors.push(`${path}: Value '${data}' does not match pattern ${schema.pattern}`);
+            }
+        }
+        // String length constraints
+        if (typeof data === 'string') {
+            if (schema.minLength !== undefined && data.length < schema.minLength) {
+                errors.push(`${path}: Value '${data}' is too short (min ${schema.minLength} characters, got ${data.length})`);
+            }
+            if (schema.maxLength !== undefined && data.length > schema.maxLength) {
+                errors.push(`${path}: Value is too long (max ${schema.maxLength} characters, got ${data.length})`);
+            }
+        }
+        // Numeric range constraints
+        if (typeof data === 'number') {
+            if (schema.minimum !== undefined && data < schema.minimum) {
+                errors.push(`${path}: Value ${data} is below minimum ${schema.minimum}`);
+            }
+            if (schema.maximum !== undefined && data > schema.maximum) {
+                errors.push(`${path}: Value ${data} exceeds maximum ${schema.maximum}`);
             }
         }
         return errors;

@@ -7,6 +7,7 @@ const EInvoiceDataGenerator = require(path.join(__dirname, '..', 'utils', 'dataG
 
 const dataGenerator = new EInvoiceDataGenerator();
 const { INVOICE_SCHEMA, validateSchema } = require('../validation/jsonSchemaValidator');
+const { validateInvoiceRegex, validateField } = require('../validation/regexPatterns');
 
 // Dynamic storage with auto-generated data
 let generatedInvoices = [];
@@ -50,6 +51,27 @@ function validateBasicInvoice(data) {
 router.post('/generate-dynamic', (req, res) => {
   try {
     const { supplyType = "B2B", scenario, count = 1 } = req.body;
+
+    // Regex validation for supplyType
+    if (supplyType) {
+      const supTypResult = validateField('SupTyp', supplyType);
+      if (!supTypResult.valid) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          errors: [supTypResult.message]
+        });
+      }
+    }
+
+    // Validate count is a positive integer within limits
+    if (count !== undefined && (typeof count !== 'number' || count < 1 || count > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: ['count must be a number between 1 and 100']
+      });
+    }
 
     let invoices = [];
 
@@ -116,6 +138,20 @@ router.post('/bulk-generate', (req, res) => {
         success: false,
         message: "Cannot generate more than 100 invoices at once"
       });
+    }
+
+    // Regex validation for each supplyType in the array
+    if (Array.isArray(supplyTypes)) {
+      for (const st of supplyTypes) {
+        const result = validateField('SupTyp', st);
+        if (!result.valid) {
+          return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors: [result.message]
+          });
+        }
+      }
     }
 
     const invoices = [];
@@ -243,6 +279,29 @@ router.get('/invoices', (req, res) => {
 
   let filteredInvoices = [...generatedInvoices];
 
+  // Regex validation for query parameters
+  if (supplyType) {
+    const r = validateField('SupTyp', supplyType);
+    if (!r.valid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid supplyType: '${supplyType}'. ${r.message}`
+      });
+    }
+  }
+
+  if (state) {
+    const r = validateField('Stcd', state);
+    if (!r.valid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid state code: '${state}'. ${r.message}`
+      });
+    }
+  }
+
   // Apply filters
   if (status) {
     filteredInvoices = filteredInvoices.filter(inv => inv.status === status);
@@ -358,7 +417,17 @@ router.post('/generate', (req, res) => {
   try {
     const invoiceData = req.body;
 
-    // Basic validation
+    // Regex pattern validation (field-level format checks)
+    const regexErrors = validateInvoiceRegex(invoiceData);
+    if (regexErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Regex validation failed',
+        errors: regexErrors
+      });
+    }
+
+    // Basic validation (required fields, types, schema structure)
     const errors = validateBasicInvoice(invoiceData);
     if (errors.length > 0) {
       return res.status(400).json({
@@ -453,6 +522,17 @@ router.post('/generate', (req, res) => {
 router.post('/validate', (req, res) => {
   try {
     const invoiceData = req.body;
+
+    // Regex pattern validation (field-level format checks)
+    const regexErrors = validateInvoiceRegex(invoiceData);
+    if (regexErrors.length > 0) {
+      return res.status(400).json({
+        isValid: false,
+        errors: regexErrors.map(error => ({ message: error, type: 'regex' }))
+      });
+    }
+
+    // Schema validation (required fields, types, structure)
     const errors = validateBasicInvoice(invoiceData);
 
     if (errors.length > 0) {
@@ -652,6 +732,19 @@ router.get('/filter-options', (req, res) => {
 
 // Get validation rules
 router.get('/validation-rules', (req, res) => {
+  const { PATTERNS } = require('../validation/regexPatterns');
+
+  // Build a simplified view of the regex patterns for the API consumer
+  const regexRules = {};
+  for (const [key, val] of Object.entries(PATTERNS)) {
+    regexRules[key] = {
+      pattern: val.pattern,
+      message: val.message,
+      ...(val.length ? { length: val.length } : {}),
+      ...(val.range ? { range: val.range } : {})
+    };
+  }
+
   res.json({
     success: true,
     data: {
@@ -663,6 +756,7 @@ router.get('/validation-rules', (req, res) => {
       ],
       allowedDocTypes: ["INV", "CRN", "DBN"],
       allowedSupplyTypes: ["B2B", "SEZWP", "SEZWOP", "EXPWP", "EXPWOP", "DEXP"],
+      regexPatterns: regexRules,
       sampleIRNs: generatedInvoices.slice(0, 3).map(inv => inv.irn)
     }
   });
