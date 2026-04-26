@@ -98,15 +98,15 @@ const PATTERNS = {
     range: { min: 100000, max: 999999 }
   },
   Stcd: {
-    regex: /^([1-9]|[0-9]{2})$/,
-    pattern: '^([1-9]|[0-9]{2})$',
-    message: 'State code must be a 1-2 digit number',
+    regex: /^(0?[1-9]|[12][0-9]|3[0-8]|96|97|99)$/,
+    pattern: '^(0?[1-9]|[12][0-9]|3[0-8]|96|97|99)$',
+    message: 'State code must be a valid GST state code (01-38, 96, 97, or 99)',
     length: { min: 1, max: 2 }
   },
   Pos: {
-    regex: /^([1-9]|[0-9]{2})$/,
-    pattern: '^([1-9]|[0-9]{2})$',
-    message: 'Place of supply must be a 1-2 digit state code',
+    regex: /^(0?[1-9]|[12][0-9]|3[0-8]|96|97|99)$/,
+    pattern: '^(0?[1-9]|[12][0-9]|3[0-8]|96|97|99)$',
+    message: 'Place of supply must be a valid GST state code (01-38, 96, 97, or 99)',
     length: { min: 1, max: 2 }
   },
 
@@ -320,9 +320,80 @@ function validateInvoiceRegex(data) {
   return errors;
 }
 
+// ==================== GST Inter/Intra-State Logic ====================
+
+/** Valid GST state codes: 1-38, 96, 97, 99 */
+const VALID_GST_STATE_CODES = new Set([
+  ...Array.from({ length: 38 }, (_, i) => String(i + 1).padStart(2, '0')),
+  '96', '97', '99'
+]);
+
+/**
+ * Check if a value is a valid GST state code.
+ * Accepts both '7' and '07' formats.
+ * @param {string|number} code
+ * @returns {boolean}
+ */
+function isValidGstStateCode(code) {
+  if (code === undefined || code === null || code === '') return false;
+  const normalized = String(code).padStart(2, '0');
+  return VALID_GST_STATE_CODES.has(normalized);
+}
+
+/**
+ * Determine Inter-State vs Intra-State based on seller state code and
+ * Place of Supply (Pos).
+ *
+ * NIC e-Invoice rule:
+ *   Compare SellerDtls.Stcd vs BuyerDtls.Pos (Place of Supply)
+ *
+ * For B2B domestic, Pos = buyer's state code, so the result is equivalent
+ * to comparing seller vs buyer state. For SEZ/Export, Pos = "96", which
+ * always makes it Inter-State (IGST) regardless of physical location.
+ *
+ * Rule 1: sellerState ≠ Pos AND both valid → Inter-State (IGST)
+ * Rule 2: sellerState == Pos AND both valid → Intra-State (CGST + SGST)
+ *
+ * @param {string|number} sellerStateCode  - Seller's GST state code (SellerDtls.Stcd)
+ * @param {string|number} placeOfSupply    - Place of Supply (BuyerDtls.Pos)
+ * @returns {{ isInterstate: boolean, taxType: string, valid: boolean, message: string|null }}
+ */
+function determineSupplyType(sellerStateCode, placeOfSupply) {
+  const sellerValid = isValidGstStateCode(sellerStateCode);
+  const posValid    = isValidGstStateCode(placeOfSupply);
+
+  if (!sellerValid || !posValid) {
+    const invalid = [];
+    if (!sellerValid) invalid.push(`sellerState '${sellerStateCode}'`);
+    if (!posValid)    invalid.push(`placeOfSupply '${placeOfSupply}'`);
+    return {
+      isInterstate: null,
+      taxType: null,
+      valid: false,
+      message: `Invalid GST state code(s): ${invalid.join(', ')}. Valid codes: 01-38, 96, 97, 99`
+    };
+  }
+
+  // Normalize to 2-digit for comparison
+  const sellerNorm = String(sellerStateCode).padStart(2, '0');
+  const posNorm    = String(placeOfSupply).padStart(2, '0');
+
+  const isInterstate = sellerNorm !== posNorm;
+
+  return {
+    isInterstate,
+    taxType: isInterstate ? 'IGST' : 'CGST+SGST',
+    valid: true,
+    message: null
+  };
+}
+
 module.exports = {
   PATTERNS,
+  VALID_GST_STATE_CODES,
   validateField,
   validateFields,
-  validateInvoiceRegex
+  validateInvoiceRegex,
+  isValidGstStateCode,
+  determineSupplyType
 };

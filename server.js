@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
-const { validateField } = require('./validation/regexPatterns');
+const { validateField, determineSupplyType } = require('./validation/regexPatterns');
 
 const app = express();
 
@@ -445,6 +445,10 @@ const filter = new GenericFilter();
  * Format invoice for response
  */
 function formatInvoice(invoice) {
+  const supplyResult = determineSupplyType(
+    invoice.invoiceData.SellerDtls.Stcd,
+    invoice.invoiceData.BuyerDtls.Pos
+  );
   return {
     id: invoice.id,
     irn: invoice.irn,
@@ -462,7 +466,8 @@ function formatInvoice(invoice) {
     sellerState: invoice.invoiceData.SellerDtls.Stcd,
     buyerState: invoice.invoiceData.BuyerDtls.Stcd,
     pos: invoice.invoiceData.BuyerDtls.Pos,
-    isInterstate: invoice.invoiceData.SellerDtls.Stcd !== invoice.invoiceData.BuyerDtls.Pos,
+    isInterstate: supplyResult.isInterstate,
+    taxType: supplyResult.taxType,
     reverseCharge: invoice.invoiceData.TranDtls.RegRev === 'Y',
     itemCount: invoice.invoiceData.ItemList ? invoice.invoiceData.ItemList.length : 0
   };
@@ -472,6 +477,7 @@ function formatInvoice(invoice) {
  * Format sample for response
  */
 function formatSample(id, sample) {
+  const supplyResult = determineSupplyType(sample.SellerDtls.Stcd, sample.BuyerDtls.Pos);
   return {
     id: parseInt(id),
     type: sample.TranDtls.SupTyp,
@@ -481,7 +487,8 @@ function formatSample(id, sample) {
     documentType: sample.DocDtls.Typ,
     sellerState: sample.SellerDtls.Stcd,
     buyerState: sample.BuyerDtls.Stcd,
-    isInterstate: sample.SellerDtls.Stcd !== sample.BuyerDtls.Pos,
+    isInterstate: supplyResult.isInterstate,
+    taxType: supplyResult.taxType,
     reverseCharge: sample.TranDtls.RegRev === 'Y',
     itemCount: sample.ItemList ? sample.ItemList.length : 0,
     invoiceDate: sample.DocDtls.Dt,
@@ -816,12 +823,15 @@ app.get('/api/e-invoice/invoices', (req, res) => {
       }
     }
 
-    // interstate=true|false → computed: sellerState !== BuyerDtls.Pos
+    // interstate=true|false → computed: sellerState !== buyerState (GST rule)
     if (filters.interstate !== undefined) {
       const wantInterstate = filters.interstate === 'true';
       filteredData = filteredData.filter(inv => {
-        const isInterstate = inv.invoiceData.SellerDtls.Stcd !== inv.invoiceData.BuyerDtls.Pos;
-        return isInterstate === wantInterstate;
+        const result = determineSupplyType(
+          inv.invoiceData.SellerDtls.Stcd,
+          inv.invoiceData.BuyerDtls.Pos
+        );
+        return result.valid && result.isInterstate === wantInterstate;
       });
     }
 

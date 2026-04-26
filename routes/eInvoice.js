@@ -7,7 +7,7 @@ const EInvoiceDataGenerator = require(path.join(__dirname, '..', 'utils', 'dataG
 
 const dataGenerator = new EInvoiceDataGenerator();
 const { INVOICE_SCHEMA, validateSchema } = require('../validation/jsonSchemaValidator');
-const { validateInvoiceRegex, validateField } = require('../validation/regexPatterns');
+const { validateInvoiceRegex, validateField, determineSupplyType } = require('../validation/regexPatterns');
 
 // Dynamic storage with auto-generated data
 let generatedInvoices = [];
@@ -328,20 +328,25 @@ router.get('/invoices', (req, res) => {
 
   res.json({
     success: true,
-    data: paginatedInvoices.map(inv => ({
-      id: inv.id,
-      irn: inv.irn,
-      invoiceNo: inv.invoiceData.DocDtls.No,
-      sellerGstin: inv.invoiceData.SellerDtls.Gstin,
-      buyerGstin: inv.invoiceData.BuyerDtls.Gstin,
-      supplyType: inv.invoiceData.TranDtls.SupTyp,
-      totalValue: inv.invoiceData.ValDtls.TotInvVal,
-      status: inv.status,
-      generatedAt: inv.generatedAt,
-      documentType: inv.invoiceData.DocDtls.Typ,
-      sellerState: inv.invoiceData.SellerDtls.Stcd,
-      buyerState: inv.invoiceData.BuyerDtls.Stcd
-    })),
+    data: paginatedInvoices.map(inv => {
+      const supplyResult = determineSupplyType(inv.invoiceData.SellerDtls.Stcd, inv.invoiceData.BuyerDtls.Pos);
+      return {
+        id: inv.id,
+        irn: inv.irn,
+        invoiceNo: inv.invoiceData.DocDtls.No,
+        sellerGstin: inv.invoiceData.SellerDtls.Gstin,
+        buyerGstin: inv.invoiceData.BuyerDtls.Gstin,
+        supplyType: inv.invoiceData.TranDtls.SupTyp,
+        totalValue: inv.invoiceData.ValDtls.TotInvVal,
+        status: inv.status,
+        generatedAt: inv.generatedAt,
+        documentType: inv.invoiceData.DocDtls.Typ,
+        sellerState: inv.invoiceData.SellerDtls.Stcd,
+        buyerState: inv.invoiceData.BuyerDtls.Stcd,
+        isInterstate: supplyResult.isInterstate,
+        taxType: supplyResult.taxType
+      };
+    }),
     pagination: {
       page: parseInt(page),
       limit: parseInt(limit),
@@ -436,6 +441,40 @@ router.post('/generate', (req, res) => {
         message: 'Validation failed',
         errors: errors
       });
+    }
+
+    // Inter/Intra-State tax consistency validation
+    if (invoiceData.SellerDtls && invoiceData.BuyerDtls) {
+      const supplyResult = determineSupplyType(
+        invoiceData.SellerDtls.Stcd,
+        invoiceData.BuyerDtls.Pos
+      );
+
+      if (supplyResult.valid && invoiceData.ValDtls) {
+        const taxErrors = [];
+        if (supplyResult.isInterstate) {
+          // Inter-State: CGST and SGST must be 0, IGST should carry the tax
+          if (invoiceData.ValDtls.CgstVal && invoiceData.ValDtls.CgstVal !== 0) {
+            taxErrors.push(`Inter-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): CgstVal must be 0 for IGST transactions`);
+          }
+          if (invoiceData.ValDtls.SgstVal && invoiceData.ValDtls.SgstVal !== 0) {
+            taxErrors.push(`Inter-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): SgstVal must be 0 for IGST transactions`);
+          }
+        } else {
+          // Intra-State: IGST must be 0, CGST+SGST should carry the tax (unless IgstOnIntra = 'Y')
+          const igstOnIntra = invoiceData.TranDtls && invoiceData.TranDtls.IgstOnIntra === 'Y';
+          if (!igstOnIntra && invoiceData.ValDtls.IgstVal && invoiceData.ValDtls.IgstVal !== 0) {
+            taxErrors.push(`Intra-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): IgstVal must be 0 for CGST+SGST transactions (unless IgstOnIntra is 'Y')`);
+          }
+        }
+        if (taxErrors.length > 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Inter/Intra-State tax mismatch',
+            errors: taxErrors
+          });
+        }
+      }
     }
 
     // Validate positive amounts
@@ -541,6 +580,37 @@ router.post('/validate', (req, res) => {
         isValid: false,
         errors: errors.map(error => ({ message: error }))
       });
+    }
+
+    // Inter/Intra-State tax consistency validation
+    if (invoiceData.SellerDtls && invoiceData.BuyerDtls) {
+      const supplyResult = determineSupplyType(
+        invoiceData.SellerDtls.Stcd,
+        invoiceData.BuyerDtls.Pos
+      );
+
+      if (supplyResult.valid && invoiceData.ValDtls) {
+        const taxErrors = [];
+        if (supplyResult.isInterstate) {
+          if (invoiceData.ValDtls.CgstVal && invoiceData.ValDtls.CgstVal !== 0) {
+            taxErrors.push(`Inter-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): CgstVal must be 0 for IGST transactions`);
+          }
+          if (invoiceData.ValDtls.SgstVal && invoiceData.ValDtls.SgstVal !== 0) {
+            taxErrors.push(`Inter-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): SgstVal must be 0 for IGST transactions`);
+          }
+        } else {
+          const igstOnIntra = invoiceData.TranDtls && invoiceData.TranDtls.IgstOnIntra === 'Y';
+          if (!igstOnIntra && invoiceData.ValDtls.IgstVal && invoiceData.ValDtls.IgstVal !== 0) {
+            taxErrors.push(`Intra-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): IgstVal must be 0 for CGST+SGST transactions (unless IgstOnIntra is 'Y')`);
+          }
+        }
+        if (taxErrors.length > 0) {
+          return res.status(400).json({
+            isValid: false,
+            errors: taxErrors.map(e => ({ message: e, type: 'tax_mismatch' }))
+          });
+        }
+      }
     }
 
     res.json({
@@ -678,6 +748,7 @@ router.get('/sample/:id', (req, res) => {
 
     if (samples[id]) {
       const sample = samples[id];
+      const supplyResult = determineSupplyType(sample.SellerDtls.Stcd, sample.BuyerDtls.Pos);
       res.json({
         success: true,
         data: samples[id],
@@ -693,7 +764,8 @@ router.get('/sample/:id', (req, res) => {
           documentType: sample.DocDtls.Typ,
           sellerState: sample.SellerDtls.Stcd,
           buyerState: sample.BuyerDtls.Stcd,
-          isInterstate: sample.SellerDtls.Stcd !== sample.BuyerDtls.Pos,
+          isInterstate: supplyResult.isInterstate,
+          taxType: supplyResult.taxType,
           reverseCharge: sample.TranDtls.RegRev === 'Y',
           itemCount: sample.ItemList ? sample.ItemList.length : 0,
           invoiceDate: sample.DocDtls.Dt,
@@ -721,12 +793,17 @@ router.get('/samples', (req, res) => {
     const testSamples = dataGenerator.getTestSamples();
     const samples = Object.keys(testSamples).map(key => {
       const sample = testSamples[key];
+      const supplyResult = determineSupplyType(sample.SellerDtls.Stcd, sample.BuyerDtls.Pos);
       return {
         id: parseInt(key),
         type: sample.TranDtls.SupTyp,
         description: dataGenerator.getSampleDescription(parseInt(key)),
         totalValue: sample.ValDtls.TotInvVal,
-        invoiceNo: sample.DocDtls.No
+        invoiceNo: sample.DocDtls.No,
+        sellerState: sample.SellerDtls.Stcd,
+        buyerState: sample.BuyerDtls.Stcd,
+        isInterstate: supplyResult.isInterstate,
+        taxType: supplyResult.taxType
       };
     });
 
@@ -803,14 +880,19 @@ router.get('/validation-rules', (req, res) => {
 
 // Get test scenarios
 router.get('/test-scenarios', (req, res) => {
-  const scenarios = generatedInvoices.slice(0, 5).map(inv => ({
-    irn: inv.irn,
-    type: inv.invoiceData.TranDtls.SupTyp,
-    sellerState: inv.invoiceData.SellerDtls.Stcd,
-    buyerState: inv.invoiceData.BuyerDtls.Stcd,
-    totalValue: inv.invoiceData.ValDtls.TotInvVal,
-    status: inv.status
-  }));
+  const scenarios = generatedInvoices.slice(0, 5).map(inv => {
+    const supplyResult = determineSupplyType(inv.invoiceData.SellerDtls.Stcd, inv.invoiceData.BuyerDtls.Pos);
+    return {
+      irn: inv.irn,
+      type: inv.invoiceData.TranDtls.SupTyp,
+      sellerState: inv.invoiceData.SellerDtls.Stcd,
+      buyerState: inv.invoiceData.BuyerDtls.Stcd,
+      isInterstate: supplyResult.isInterstate,
+      taxType: supplyResult.taxType,
+      totalValue: inv.invoiceData.ValDtls.TotInvVal,
+      status: inv.status
+    };
+  });
 
   res.json({
     success: true,

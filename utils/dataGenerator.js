@@ -275,12 +275,20 @@ class EInvoiceDataGenerator {
     const sellerState = states[Math.floor(Math.random() * states.length)];
     const buyerState = supplyType === "B2B" ? states[Math.floor(Math.random() * states.length)] : sellerState;
 
+    // Determine Place of Supply (Pos) — the field that actually drives tax type
+    // SEZ and Export supplies always use Pos = "96" (inter-state, IGST)
+    const isExportOrSez = ["EXPWP", "EXPWOP", "SEZWP", "SEZWOP"].includes(supplyType);
+    const pos = isExportOrSez ? "96" : buyerState;
+
     const product = this.products[Math.floor(Math.random() * this.products.length)];
     const qty = Math.floor(Math.random() * 10) + 1;
     const price = Math.floor(Math.random() * (product.priceRange[1] - product.priceRange[0])) + product.priceRange[0];
     const total = qty * price;
-    const taxRate = 18;
+    const taxRate = isExportOrSez && supplyType.endsWith("WOP") ? 0 : 18;
     const tax = (total * taxRate) / 100;
+
+    // Inter/Intra-state is determined by sellerState vs Pos (NIC rule)
+    const isInterstate = sellerState !== pos;
 
     return {
       Version: "1.1",
@@ -294,20 +302,20 @@ class EInvoiceDataGenerator {
       BuyerDtls: {
         Gstin: supplyType === "EXPWP" ? "URP" : this.generateGSTIN(buyerState),
         LglNm: `${this.companies[Math.floor(Math.random() * this.companies.length)]} ${this.industries[Math.floor(Math.random() * this.industries.length)]} Ltd`,
-        Pos: supplyType === "EXPWP" ? "96" : buyerState,
-        Addr1: "Buyer Address", Loc: supplyType === "EXPWP" ? "PORT AREA" : this.states[buyerState].capital,
-        Pin: supplyType === "EXPWP" ? 999999 : this.states[buyerState].pincodes[0], Stcd: supplyType === "EXPWP" ? "96" : buyerState
+        Pos: pos,
+        Addr1: "Buyer Address", Loc: isExportOrSez && supplyType.startsWith("EXP") ? "PORT AREA" : this.states[buyerState].capital,
+        Pin: isExportOrSez && supplyType.startsWith("EXP") ? 999999 : this.states[buyerState].pincodes[0], Stcd: isExportOrSez && supplyType.startsWith("EXP") ? "96" : buyerState
       },
       ItemList: [{
         SlNo: "1", IsServc: "N", PrdDesc: product.name, HsnCd: product.hsn,
         Qty: qty, Unit: "NOS", UnitPrice: price, TotAmt: total, AssAmt: total,
-        GstRt: taxRate, IgstAmt: sellerState !== buyerState ? tax : 0,
-        CgstAmt: sellerState === buyerState ? tax / 2 : 0, SgstAmt: sellerState === buyerState ? tax / 2 : 0,
+        GstRt: taxRate, IgstAmt: isInterstate ? tax : 0,
+        CgstAmt: isInterstate ? 0 : tax / 2, SgstAmt: isInterstate ? 0 : tax / 2,
         TotItemVal: total + tax
       }],
       ValDtls: {
-        AssVal: total, CgstVal: sellerState === buyerState ? tax / 2 : 0,
-        SgstVal: sellerState === buyerState ? tax / 2 : 0, IgstVal: sellerState !== buyerState ? tax : 0,
+        AssVal: total, CgstVal: isInterstate ? 0 : tax / 2,
+        SgstVal: isInterstate ? 0 : tax / 2, IgstVal: isInterstate ? tax : 0,
         TotInvVal: total + tax
       }
     };
