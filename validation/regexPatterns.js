@@ -128,6 +128,20 @@ const PATTERNS = {
     pattern: '^[0-9]{4,8}$',
     message: 'HSN code must be 4 to 8 digits',
     length: { min: 4, max: 8 }
+  },
+
+  // ==================== Cancel Endpoint ====================
+  CnlRsn: {
+    regex: /^[1-4]$/,
+    pattern: '^[1-4]$',
+    message: 'CnlRsn must be one of: 1 (Duplicate), 2 (Data entry mistake), 3 (Order Cancelled), 4 (Others)',
+    length: { min: 1, max: 1 }
+  },
+  CnlRem: {
+    regex: /^.{1,100}$/,
+    pattern: '^.{1,100}$',
+    message: 'CnlRem (Cancellation Remarks) must be between 1 and 100 characters',
+    length: { min: 1, max: 100 }
   }
 };
 

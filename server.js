@@ -241,7 +241,8 @@ Object.values(TEST_SAMPLES).forEach((sample, index) => {
     generatedAt: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
     ...(Math.random() > 0.8 ? {
       cancelledAt: new Date().toISOString(),
-      cancelReason: ['Order cancelled', 'Price dispute', 'Duplicate invoice'][Math.floor(Math.random() * 3)]
+      CnlRsn: String([1, 2, 3, 4][Math.floor(Math.random() * 4)]),
+      CnlRem: ['Duplicate invoice entry', 'Data entry mistake in GSTIN', 'Order cancelled by buyer', 'Incorrect tax amount'][Math.floor(Math.random() * 4)]
     } : {})
   });
 });

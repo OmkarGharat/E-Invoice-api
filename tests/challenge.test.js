@@ -132,7 +132,7 @@ describe('Challenge Tests — 5 Real-World Attack Simulations', () => {
             const res = await request(app)
                 .post('/api/e-invoice/cancel')
                 .set(defaultHeaders)
-                .send({ irn: 'FAKE_IRN_USER_B_12345', cancelReason: 'test' });
+                .send({ Irn: 'FAKE_IRN_USER_B_12345', CnlRsn: '3', CnlRem: 'Order cancelled' });
             expect(res.statusCode).toBe(404);
         });
 

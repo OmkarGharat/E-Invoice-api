@@ -25,7 +25,8 @@ function initializeSampleData() {
         generatedAt: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
         ...(Math.random() > 0.8 ? {
           cancelledAt: new Date().toISOString(),
-          cancelReason: ['Order cancelled', 'Price dispute', 'Duplicate invoice'][Math.floor(Math.random() * 3)]
+          CnlRsn: String([1, 2, 3, 4][Math.floor(Math.random() * 4)]),
+          CnlRem: ['Duplicate invoice entry', 'Data entry mistake in GSTIN', 'Order cancelled by buyer', 'Incorrect tax amount'][Math.floor(Math.random() * 4)]
         } : {})
       });
     });
@@ -556,18 +557,49 @@ router.post('/validate', (req, res) => {
   }
 });
 
-// Cancel invoice
+// Cancel invoice (NIC e-Invoice API spec)
+// Accepts: { Irn, CnlRsn, CnlRem } (also supports lowercase 'irn' for backward compat)
 router.post('/cancel', (req, res) => {
   try {
-    const { irn, cancelReason } = req.body;
+    // Support both NIC-spec PascalCase and lowercase field names
+    const irn = req.body.Irn || req.body.irn;
+    const CnlRsn = req.body.CnlRsn;
+    const CnlRem = req.body.CnlRem;
+
+    // --- Validate required fields ---
+    const errors = [];
 
     if (!irn) {
+      errors.push('Irn is required');
+    }
+
+    if (CnlRsn === undefined || CnlRsn === null || CnlRsn === '') {
+      errors.push('CnlRsn (Cancellation Reason) is required. Valid values: 1 (Duplicate), 2 (Data entry mistake), 3 (Order Cancelled), 4 (Others)');
+    } else {
+      const cnlRsnResult = validateField('CnlRsn', String(CnlRsn));
+      if (!cnlRsnResult.valid) {
+        errors.push(cnlRsnResult.message);
+      }
+    }
+
+    if (CnlRem === undefined || CnlRem === null || CnlRem === '') {
+      errors.push('CnlRem (Cancellation Remarks) is required. Max 100 characters.');
+    } else {
+      const cnlRemResult = validateField('CnlRem', CnlRem);
+      if (!cnlRemResult.valid) {
+        errors.push(cnlRemResult.message);
+      }
+    }
+
+    if (errors.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'IRN is required'
+        message: 'Validation failed',
+        errors: errors
       });
     }
 
+    // --- Find invoice ---
     const invoice = generatedInvoices.find(inv => inv.irn === irn);
     if (!invoice) {
       return res.status(404).json({
@@ -591,23 +623,30 @@ router.post('/cancel', (req, res) => {
         success: false,
         message: 'Invoice is already cancelled',
         data: {
-          irn: irn,
+          Irn: irn,
           status: 'Cancelled',
-          cancelledAt: invoice.cancelledAt
+          cancelledAt: invoice.cancelledAt,
+          CnlRsn: invoice.CnlRsn,
+          CnlRem: invoice.CnlRem
         }
       });
     }
 
+    // --- Perform cancellation ---
     invoice.status = 'Cancelled';
     invoice.cancelledAt = new Date().toISOString();
-    invoice.cancelReason = cancelReason;
+    invoice.CnlRsn = String(CnlRsn);
+    invoice.CnlRem = CnlRem;
 
     res.json({
       success: true,
       message: 'Invoice cancelled successfully',
       data: {
-        irn: irn,
-        status: 'Cancelled'
+        Irn: irn,
+        status: 'Cancelled',
+        cancelledAt: invoice.cancelledAt,
+        CnlRsn: invoice.CnlRsn,
+        CnlRem: invoice.CnlRem
       }
     });
 

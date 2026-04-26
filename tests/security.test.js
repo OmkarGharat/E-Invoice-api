@@ -306,14 +306,14 @@ describe('Authentication Security Suite', () => {
             const cancelRes1 = await request(app)
                 .post('/api/e-invoice/cancel')
                 .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
-                .send({ irn, cancelReason: 'Test' });
+                .send({ Irn: irn, CnlRsn: '1', CnlRem: 'Duplicate invoice entry' });
             expect(cancelRes1.statusCode).toEqual(200);
 
             // Try to cancel again — should fail
             const cancelRes2 = await request(app)
                 .post('/api/e-invoice/cancel')
                 .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
-                .send({ irn, cancelReason: 'Test again' });
+                .send({ Irn: irn, CnlRsn: '2', CnlRem: 'Test again' });
             expect(cancelRes2.statusCode).toEqual(400);
             expect(cancelRes2.body.message).toMatch(/already cancelled/i);
         });
@@ -322,8 +322,35 @@ describe('Authentication Security Suite', () => {
             const res = await request(app)
                 .post('/api/e-invoice/cancel')
                 .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
-                .send({ irn: 'NONEXISTENT_IRN_12345', cancelReason: 'Test' });
+                .send({ Irn: 'NONEXISTENT_IRN_12345', CnlRsn: '3', CnlRem: 'Order cancelled by buyer' });
             expect(res.statusCode).toEqual(404);
+        });
+
+        it('should reject missing CnlRsn', async () => {
+            const res = await request(app)
+                .post('/api/e-invoice/cancel')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
+                .send({ Irn: 'SOME_IRN', CnlRem: 'Some remark' });
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.message).toMatch(/validation failed/i);
+        });
+
+        it('should reject invalid CnlRsn value (must be 1-4)', async () => {
+            const res = await request(app)
+                .post('/api/e-invoice/cancel')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
+                .send({ Irn: 'SOME_IRN', CnlRsn: '5', CnlRem: 'Invalid reason code' });
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.errors).toBeDefined();
+        });
+
+        it('should reject missing CnlRem', async () => {
+            const res = await request(app)
+                .post('/api/e-invoice/cancel')
+                .set(getHeaders({ 'x-api-key': VALID_API_KEY, 'Authorization': `Bearer ${VALID_BEARER_TOKEN}` }))
+                .send({ Irn: 'SOME_IRN', CnlRsn: '1' });
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.message).toMatch(/validation failed/i);
         });
     });
 

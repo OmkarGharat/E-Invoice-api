@@ -227,6 +227,67 @@ window.generateInvoice = async function () {
     }
 };
 
+window.cancelInvoice = async function () {
+    const irn = prompt('Enter the IRN to cancel:\n(You can find IRNs from the "View Invoices" or "Generate Invoice" response)', '');
+    if (!irn) return;
+
+    const cnlRsn = prompt('Enter Cancellation Reason Code:\n1 = Duplicate\n2 = Data entry mistake\n3 = Order Cancelled\n4 = Others', '1');
+    if (!cnlRsn) return;
+
+    const cnlRem = prompt('Enter Cancellation Remarks (max 100 chars):', 'Duplicate invoice entry');
+    if (!cnlRem) return;
+
+    const testResult = document.getElementById('testResult');
+    const resultContent = document.getElementById('resultContent');
+
+    if (testResult && resultContent) {
+        testResult.style.display = 'block';
+        resultContent.innerHTML = '<div class="text-center"><div class="spinner-border text-danger" role="status"></div><div class="mt-2">Cancelling invoice...</div></div>';
+        testResult.querySelector('.card').className = 'card bg-dark border-secondary';
+    }
+
+    try {
+        const headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'x-api-key': APP_CREDENTIALS.apiKey || 'ei_demo_8x92m3c7-4j5k-2h1g-9s8d-7f6g5h4j3k2l'
+        };
+
+        const response = await fetch('/api/e-invoice/cancel', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({
+                Irn: irn.trim(),
+                CnlRsn: cnlRsn.trim(),
+                CnlRem: cnlRem.trim()
+            })
+        });
+
+        const data = await response.json();
+
+        if (testResult && resultContent) {
+            resultContent.textContent = JSON.stringify(data, null, 2);
+            testResult.querySelector('.card').className = response.ok
+                ? 'card bg-dark border-success'
+                : 'card bg-dark border-danger';
+        }
+
+        // Refresh stats
+        loadStats();
+
+        // Scroll to result
+        testResult.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    } catch (error) {
+        console.error('Error cancelling invoice:', error);
+        if (testResult && resultContent) {
+            resultContent.textContent = 'Error: ' + error.message;
+            testResult.querySelector('.card').className = 'card bg-dark border-danger';
+            testResult.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+};
+
 // Load API statistics
 async function loadStats() {
     try {

@@ -8,9 +8,9 @@
 
     <!-- SEO Meta Tags -->
     <meta name="description"
-        content="Free E-Invoice API Sandbox for developers. Test Indian GST E-Invoicing integration with realistic data, error simulation, and auto-generated IRNs/QR Codes. No login required for basic endpoints.">
+        content="Free E-Invoice API Sandbox for developers. Test Indian GST E-Invoicing integration with realistic data, error simulation, and auto-generated IRNs. Edge case testing for headers, tokens, CSRF, and rate limits.">
     <meta name="keywords"
-        content="E-Invoice API, GST API Testing, IRN Generation, QR Code API, Indian GST Sandbox, E-Invoice JSON Schema, Developer Tools, Mock API">
+        content="E-Invoice API, GST API Testing, IRN Generation, Edge Case Testing, Indian GST Sandbox, E-Invoice JSON Schema, Developer Tools, Mock API">
     <meta name="author" content="Omkar Gharat">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://e-invoice-api.vercel.app/">
@@ -163,8 +163,8 @@
                                 <div class="card-body text-center">
                                     <i class="bi bi-file-earmark-plus display-6 text-primary mb-3"></i>
                                     <h5 class="card-title">Generate Invoices</h5>
-                                    <p class="card-text text-muted">Create E-Invoices with auto-generated IRN and QR
-                                        codes</p>
+                                    <p class="card-text text-muted">Create E-Invoices with auto-generated IRN and
+                                        acknowledgement</p>
                                 </div>
                             </div>
                         </div>
@@ -190,9 +190,9 @@
                         <div class="col-md-6 col-lg-3">
                             <div class="card h-100 bg-secondary border-0">
                                 <div class="card-body text-center">
-                                    <i class="bi bi-qr-code display-6 text-info mb-3"></i>
-                                    <h5 class="card-title">QR Generation</h5>
-                                    <p class="card-text text-muted">Auto-generate QR codes for invoice verification</p>
+                                    <i class="bi bi-shield-exclamation display-6 text-info mb-3"></i>
+                                    <h5 class="card-title">Edge Case Testing</h5>
+                                    <p class="card-text text-muted">Test headers, tokens, CSRF, rate limits & more</p>
                                 </div>
                             </div>
                         </div>
@@ -392,6 +392,11 @@
                                 </button>
                                 <button class="btn btn-outline-light" onclick="generateInvoice()">
                                     <i class="bi bi-plus-circle me-2"></i>Generate Invoice
+                                    <i class="bi bi-lock-fill text-warning ms-1" data-bs-toggle="tooltip"
+                                        title="Protected: Auto-using API Key"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="cancelInvoice()">
+                                    <i class="bi bi-x-circle me-2"></i>Cancel Invoice
                                     <i class="bi bi-lock-fill text-warning ms-1" data-bs-toggle="tooltip"
                                         title="Protected: Auto-using API Key"></i>
                                 </button>
@@ -903,9 +908,10 @@
                                 <a class="nav-link text-light mb-2 active" href="#doc-intro">1. Introduction</a>
                                 <a class="nav-link text-light mb-2" href="#doc-auth">2. Authentication</a>
                                 <a class="nav-link text-light mb-2" href="#doc-endpoints">3. Core Endpoints</a>
-                                <a class="nav-link text-light mb-2" href="#doc-datamodel">4. Data Model</a>
-                                <a class="nav-link text-light mb-2" href="#doc-filtering">5. Filtering</a>
-                                <a class="nav-link text-light mb-2" href="#doc-edge">6. Edge Cases</a>
+                                <a class="nav-link text-light mb-2" href="#doc-cancel">4. Cancellation</a>
+                                <a class="nav-link text-light mb-2" href="#doc-datamodel">5. Data Model</a>
+                                <a class="nav-link text-light mb-2" href="#doc-filtering">6. Filtering</a>
+                                <a class="nav-link text-light mb-2" href="#doc-edge">7. Edge Cases</a>
                             </nav>
                         </div>
                     </div>
@@ -920,10 +926,9 @@
                             <p>This API is a high-fidelity Sandbox environment designed to mimic the standards and
                                 behaviors
                                 of the Indian Goods and Services Tax (GST) E-Invoicing system (IRP). It automates the
-                                generation of complex JSON structures, IRNs (Invoice Reference Numbers), and QR codes,
-                                allowing developers to test their ERP integrations without needing credentials for the
-                                live
-                                government portal.</p>
+                                generation of complex JSON structures, IRNs (Invoice Reference Numbers), and
+                                cancellation workflows, allowing developers to test their ERP integrations without
+                                needing credentials for the live government portal.</p>
                             <div class="alert alert-info border-info">
                                 <i class="bi bi-info-circle me-2"></i>
                                 <strong>Goal:</strong> To provide a stable, zero-setup environment for testing
@@ -1061,7 +1066,7 @@
                                                 <code
                                                     class="text-light text-nowrap">/api/e-invoice/generate-dynamic</code>
                                             </div>
-                                            <small class="text-muted">Generate fresh random invoice with IRN/QR.</small>
+                                            <small class="text-muted">Generate fresh random invoice with IRN.</small>
                                         </div>
                                     </div>
 
@@ -1088,9 +1093,144 @@
                             </div>
                         </section>
 
-                        <!-- 4. Data Model -->
+                        <!-- 4. Cancellation -->
+                        <section id="doc-cancel" class="mb-5">
+                            <h2 class="border-bottom border-secondary pb-2 mb-4">4. Cancellation</h2>
+                            <p>Cancel a generated invoice using the NIC e-Invoice API specification fields.</p>
+
+                            <div class="card bg-dark border-secondary mb-4">
+                                <div class="card-header bg-secondary">
+                                    <div class="d-flex align-items-center">
+                                        <span class="badge bg-primary me-2">POST</span>
+                                        <code class="text-light">/api/e-invoice/cancel</code>
+                                        <span class="badge bg-warning text-dark ms-auto">Auth Required</span>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <h6 class="text-info mb-3">Request Body</h6>
+                                    <div class="table-responsive mb-4">
+                                        <table class="table table-dark table-bordered mb-0">
+                                            <thead>
+                                                <tr>
+                                                    <th>Field</th>
+                                                    <th>Type</th>
+                                                    <th>Required</th>
+                                                    <th>Description</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td><code>Irn</code></td>
+                                                    <td>String</td>
+                                                    <td>✅ Yes</td>
+                                                    <td>Invoice Reference Number to cancel</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><code>CnlRsn</code></td>
+                                                    <td>String</td>
+                                                    <td>✅ Yes</td>
+                                                    <td>Cancellation Reason Code (see table below)</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><code>CnlRem</code></td>
+                                                    <td>String</td>
+                                                    <td>✅ Yes</td>
+                                                    <td>Cancellation Remarks (1-100 characters)</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <h6 class="text-warning mb-3">Valid CnlRsn Values (NIC Spec)</h6>
+                                    <div class="table-responsive mb-4">
+                                        <table class="table table-dark table-bordered mb-0">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 80px;">Code</th>
+                                                    <th>Meaning</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr><td><code>1</code></td><td>Duplicate</td></tr>
+                                                <tr><td><code>2</code></td><td>Data entry mistake</td></tr>
+                                                <tr><td><code>3</code></td><td>Order Cancelled</td></tr>
+                                                <tr><td><code>4</code></td><td>Others</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <h6 class="text-success mb-3">Example Request</h6>
+                                    <pre class="bg-secondary rounded p-3 mb-4"><code>POST /api/e-invoice/cancel
+Content-Type: application/json
+x-api-key: your-api-key
+
+{
+  "Irn": "IRNXXXXXXXXXX",
+  "CnlRsn": "1",
+  "CnlRem": "Duplicate invoice entry"
+}</code></pre>
+
+                                    <h6 class="text-danger mb-3">Error Scenarios for Testing</h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-dark table-bordered mb-0">
+                                            <thead>
+                                                <tr>
+                                                    <th>Scenario</th>
+                                                    <th>Status</th>
+                                                    <th>Description</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td>Missing <code>Irn</code></td>
+                                                    <td><span class="badge bg-warning text-dark">400</span></td>
+                                                    <td>Irn is required</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Missing <code>CnlRsn</code></td>
+                                                    <td><span class="badge bg-warning text-dark">400</span></td>
+                                                    <td>Validation failed</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Invalid <code>CnlRsn</code> (e.g. "5")</td>
+                                                    <td><span class="badge bg-warning text-dark">400</span></td>
+                                                    <td>Must be 1, 2, 3, or 4</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Missing <code>CnlRem</code></td>
+                                                    <td><span class="badge bg-warning text-dark">400</span></td>
+                                                    <td>Cancellation Remarks required</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><code>CnlRem</code> &gt; 100 chars</td>
+                                                    <td><span class="badge bg-warning text-dark">400</span></td>
+                                                    <td>Max 100 characters</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Non-existent IRN</td>
+                                                    <td><span class="badge bg-danger">404</span></td>
+                                                    <td>Invoice not found</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Already cancelled</td>
+                                                    <td><span class="badge bg-warning text-dark">400</span></td>
+                                                    <td>Invoice is already cancelled</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>No authentication</td>
+                                                    <td><span class="badge bg-danger">401</span></td>
+                                                    <td>Auth required</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- 5. Data Model -->
                         <section id="doc-datamodel" class="mb-5">
-                            <h2 class="border-bottom border-secondary pb-2 mb-4">4. Data Model Deep Dive</h2>
+                            <h2 class="border-bottom border-secondary pb-2 mb-4">5. Data Model Deep Dive</h2>
                             <p>Here is an explanation of the output from <code>/api/e-invoice/sample/1</code>:</p>
 
                             <div class="accordion" id="dataModelAccordion">
@@ -1160,7 +1300,7 @@
 
                         <!-- 5. Filtering -->
                         <section id="doc-filtering" class="mb-5">
-                            <h2 class="border-bottom border-secondary pb-2 mb-4">5. Filtering & Search</h2>
+                            <h2 class="border-bottom border-secondary pb-2 mb-4">6. Filtering & Search</h2>
                             <div class="card bg-secondary border-0">
                                 <div class="card-header bg-dark border-secondary">
                                     <h5 class="mb-0"><i class="bi bi-funnel me-2"></i>Advanced Filtering</h5>
@@ -1219,7 +1359,7 @@
 
                         <!-- 6. Edge Cases -->
                         <section id="doc-edge" class="mb-5">
-                            <h2 class="border-bottom border-secondary pb-2 mb-4">6. Edge Cases & Errors</h2>
+                            <h2 class="border-bottom border-secondary pb-2 mb-4">7. Edge Cases & Errors</h2>
                             <p>We simulate specific failure scenarios to help you build robust error handling.</p>
 
                             <!-- Detailed Edge Cases -->
@@ -1335,7 +1475,7 @@
             <div class="alert alert-warning border-warning">
                 <h4 class="alert-heading"><i class="bi bi-exclamation-triangle me-2"></i>Important Notice</h4>
                 <p class="mb-0">
-                    <strong>This is a testing API only.</strong> All generated IRNs and QR codes are simulated and have
+                    <strong>This is a testing API only.</strong> All generated IRNs and data are simulated and have
                     no legal validity.
                     Do not use for production purposes or actual GST filing.
                 </p>
