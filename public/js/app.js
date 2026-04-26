@@ -346,7 +346,13 @@ async function loadStats() {
 // Load available samples
 async function loadSamples() {
     try {
-        const response = await fetch('/api/e-invoice/samples');
+        const samplesHeaders = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': 'Bearer ' + (APP_CREDENTIALS.token || 'demo-token'),
+            'x-api-key': APP_CREDENTIALS.apiKey || 'ei_demo_8x92m3c7-4j5k-2h1g-9s8d-7f6g5h4j3k2l'
+        };
+        const response = await fetch('/api/e-invoice/samples', { headers: samplesHeaders });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
