@@ -3,6 +3,10 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
 const { validateField, determineSupplyType } = require('./validation/regexPatterns');
+const { inject } = require('@vercel/analytics');
+
+// Initialize Vercel Web Analytics
+inject();
 
 const app = express();
 
