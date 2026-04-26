@@ -22,6 +22,11 @@ app.use(bodyParser.json({ limit: '100kb' })); // Limit payload to 100kb to preve
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Method Enforcement — must run BEFORE security/auth middleware
+// so wrong-method requests get 405 instead of 400/401/415
+const enforceAllowedMethods = require('./middleware/methodEnforcement');
+app.use(enforceAllowedMethods);
+
 // Import Security Middleware (Block 3 Edge Cases)
 const security = require('./middleware/security');
 
@@ -508,15 +513,8 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Reject non-GET methods on /health with 405
-app.all('/health', (req, res) => {
-  res.status(405).json({
-    success: false,
-    error: 'Method Not Allowed',
-    message: `${req.method} is not allowed on /health. Use GET instead.`,
-    allowedMethods: ['GET']
-  });
-});
+// Note: 405 for wrong methods on /health is handled globally
+// by the methodEnforcement middleware (runs before security checks).
 
 // Get all invoices with generic filtering
 app.get('/api/e-invoice/invoices', (req, res) => {
