@@ -764,6 +764,7 @@ router.get('/sample/:id', (req, res) => {
           documentType: sample.DocDtls.Typ,
           sellerState: sample.SellerDtls.Stcd,
           buyerState: sample.BuyerDtls.Stcd,
+          pos: sample.BuyerDtls.Pos,
           isInterstate: supplyResult.isInterstate,
           taxType: supplyResult.taxType,
           reverseCharge: sample.TranDtls.RegRev === 'Y',
@@ -802,6 +803,7 @@ router.get('/samples', (req, res) => {
         invoiceNo: sample.DocDtls.No,
         sellerState: sample.SellerDtls.Stcd,
         buyerState: sample.BuyerDtls.Stcd,
+        pos: sample.BuyerDtls.Pos,
         isInterstate: supplyResult.isInterstate,
         taxType: supplyResult.taxType
       };

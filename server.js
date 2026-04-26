@@ -487,6 +487,7 @@ function formatSample(id, sample) {
     documentType: sample.DocDtls.Typ,
     sellerState: sample.SellerDtls.Stcd,
     buyerState: sample.BuyerDtls.Stcd,
+    pos: sample.BuyerDtls.Pos,
     isInterstate: supplyResult.isInterstate,
     taxType: supplyResult.taxType,
     reverseCharge: sample.TranDtls.RegRev === 'Y',
