@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const path = require('path');
 const router = express.Router();  // ← THIS LINE MUST EXIST
 
@@ -38,12 +39,108 @@ initializeSampleData();
 let invoiceCounter = generatedInvoices.length + 1;
 
 // Helper functions
-function generateIRN() {
-  return `IRN${Date.now()}${Math.random().toString(36).substr(2, 9)}`.toUpperCase();
+function generateIRN(gstin, docType, docNo, docDt) {
+  const input = `${gstin}${docType}${docNo}${docDt}`;
+  return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+function getDocumentKey(invoiceData) {
+  const gstin = invoiceData.SellerDtls?.Gstin || '';
+  const docType = invoiceData.DocDtls?.Typ || '';
+  const docNo = invoiceData.DocDtls?.No || '';
+  const docDt = invoiceData.DocDtls?.Dt || '';
+  return `${gstin}|${docType}|${docNo}|${docDt}`;
+}
+
+function findDuplicateInvoice(invoiceData) {
+  const key = getDocumentKey(invoiceData);
+  return generatedInvoices.find(inv => {
+    const existingKey = getDocumentKey(inv.invoiceData);
+    return existingKey === key;
+  });
 }
 
 function validateBasicInvoice(data) {
   return validateSchema(data, INVOICE_SCHEMA);
+}
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * Shared amount validation — used by both /generate and /validate
+ * Validates positive amounts, cross-field math, and item-level consistency.
+ */
+function validateAmounts(invoiceData) {
+  const errors = [];
+
+  // Validate positive TotInvVal
+  if (invoiceData.ValDtls && invoiceData.ValDtls.TotInvVal !== undefined) {
+    if (invoiceData.DocDtls?.Typ !== 'CRN' && invoiceData.DocDtls?.Typ !== 'DBN') {
+      if (invoiceData.ValDtls.TotInvVal <= 0) {
+        errors.push('Amount must be positive: TotInvVal must be greater than 0');
+      }
+    }
+  }
+
+  // Validate item-level amounts
+  if (invoiceData.ItemList && Array.isArray(invoiceData.ItemList)) {
+    for (let i = 0; i < invoiceData.ItemList.length; i++) {
+      const item = invoiceData.ItemList[i];
+
+      // UnitPrice must not be negative (except for credit notes)
+      if (item.UnitPrice !== undefined && invoiceData.DocDtls?.Typ !== 'CRN') {
+        if (item.UnitPrice < 0) {
+          errors.push(`ItemList[${i}].UnitPrice must not be negative`);
+        }
+      }
+
+      // TotItemVal must not be negative (except for credit notes)
+      if (item.TotItemVal !== undefined && invoiceData.DocDtls?.Typ !== 'CRN') {
+        if (item.TotItemVal < 0) {
+          errors.push(`ItemList[${i}].TotItemVal must not be negative`);
+        }
+      }
+
+      // Cross-field: TotAmt should equal Qty * UnitPrice
+      if (item.Qty !== undefined && item.UnitPrice !== undefined && item.TotAmt !== undefined) {
+        const expectedTotAmt = round2(item.Qty * item.UnitPrice);
+        if (round2(item.TotAmt) !== expectedTotAmt) {
+          errors.push(`ItemList[${i}].TotAmt (${item.TotAmt}) does not match Qty * UnitPrice (${expectedTotAmt})`);
+        }
+      }
+
+      // Cross-field: TotItemVal should equal AssAmt + IgstAmt + CgstAmt + SgstAmt
+      if (item.AssAmt !== undefined && item.IgstAmt !== undefined && item.CgstAmt !== undefined && item.SgstAmt !== undefined && item.TotItemVal !== undefined) {
+        const expectedTotItemVal = round2(item.AssAmt + item.IgstAmt + item.CgstAmt + item.SgstAmt);
+        if (round2(item.TotItemVal) !== expectedTotItemVal) {
+          errors.push(`ItemList[${i}].TotItemVal (${item.TotItemVal}) does not match AssAmt + IgstAmt + CgstAmt + SgstAmt (${expectedTotItemVal})`);
+        }
+      }
+    }
+
+    // Cross-field: Sum of item taxes should match ValDtls
+    if (invoiceData.ValDtls) {
+      const sumAssAmt = round2(invoiceData.ItemList.reduce((s, item) => s + (item.AssAmt || 0), 0));
+      const sumCgst = round2(invoiceData.ItemList.reduce((s, item) => s + (item.CgstAmt || 0), 0));
+      const sumSgst = round2(invoiceData.ItemList.reduce((s, item) => s + (item.SgstAmt || 0), 0));
+      const sumIgst = round2(invoiceData.ItemList.reduce((s, item) => s + (item.IgstAmt || 0), 0));
+
+      if (invoiceData.ValDtls.AssVal !== undefined && round2(invoiceData.ValDtls.AssVal) !== sumAssAmt) {
+        errors.push(`ValDtls.AssVal (${invoiceData.ValDtls.AssVal}) does not match sum of ItemList AssAmt (${sumAssAmt})`);
+      }
+      if (invoiceData.ValDtls.CgstVal !== undefined && round2(invoiceData.ValDtls.CgstVal) !== sumCgst) {
+        errors.push(`ValDtls.CgstVal (${invoiceData.ValDtls.CgstVal}) does not match sum of ItemList CgstAmt (${sumCgst})`);
+      }
+      if (invoiceData.ValDtls.SgstVal !== undefined && round2(invoiceData.ValDtls.SgstVal) !== sumSgst) {
+        errors.push(`ValDtls.SgstVal (${invoiceData.ValDtls.SgstVal}) does not match sum of ItemList SgstAmt (${sumSgst})`);
+      }
+      if (invoiceData.ValDtls.IgstVal !== undefined && round2(invoiceData.ValDtls.IgstVal) !== sumIgst) {
+        errors.push(`ValDtls.IgstVal (${invoiceData.ValDtls.IgstVal}) does not match sum of ItemList IgstAmt (${sumIgst})`);
+      }
+    }
+  }
+
+  return errors;
 }
 
 // ==================== DYNAMIC GENERATION ENDPOINTS ====================
@@ -88,11 +185,20 @@ router.post('/generate-dynamic', (req, res) => {
     }
 
     const results = invoices.map(invoice => {
-      const irn = `IRN${Date.now()}${Math.random().toString(36).substr(2, 8)}`.toUpperCase();
+      const irn = generateIRN(
+        invoice.SellerDtls?.Gstin || '',
+        invoice.DocDtls?.Typ || '',
+        invoice.DocDtls?.No || '',
+        invoice.DocDtls?.Dt || ''
+      );
+      const ackNo = `ACK${Date.now()}${Math.floor(Math.random() * 100000)}`;
+      const ackDt = new Date().toLocaleDateString('en-GB');
 
       const invoiceRecord = {
         id: invoiceCounter++,
         irn: irn,
+        ackNo: ackNo,
+        ackDt: ackDt,
         invoiceData: invoice,
         status: 'Generated',
         generatedAt: new Date().toISOString()
@@ -102,21 +208,24 @@ router.post('/generate-dynamic', (req, res) => {
 
       return {
         Irn: irn,
-        AckNo: `ACK${Date.now()}${Math.random().toString(36).substr(2, 6)}`.toUpperCase(),
-        AckDt: new Date().toLocaleDateString('en-GB'),
-        SignedInvoice: {
-          ...invoice,
-          IRN: irn
-        },
+        AckNo: ackNo,
+        AckDt: ackDt,
+        SignedInvoice: invoice,
         QRCode: `QR_${irn}`
       };
     });
 
-    res.json({
+    res.status(201).json({
       success: true,
       data: count === 1 ? results[0] : results,
       count: results.length,
-      message: `Successfully generated ${results.length} dynamic invoice(s)`
+      message: `Successfully generated ${results.length} dynamic invoice(s)`,
+      usage: {
+        generateMultiple: 'Send { "count": 5 } in request body to generate multiple invoices',
+        specifyType: 'Send { "supplyType": "EXPWP" } to specify supply type',
+        useScenario: 'Send { "scenario": "b2b_interstate" } for specific tax scenarios',
+        listScenarios: 'GET /api/e-invoice/scenarios for all available scenarios'
+      }
     });
 
   } catch (error) {
@@ -272,123 +381,261 @@ router.get('/scenarios', (req, res) => {
   });
 });
 
-// ==================== ORIGINAL ENDPOINTS ====================
+// ==================== GENERIC FILTERING & FORMATTING ====================
 
-// Get all invoices with filtering
+const GenericFilter = require(path.join(__dirname, '..', 'utils', 'genericFilter'));
+const filter = new GenericFilter();
+
+/**
+ * Format invoice for response
+ */
+function formatInvoice(invoice) {
+  const supplyResult = determineSupplyType(
+    invoice.invoiceData.SellerDtls.Stcd,
+    invoice.invoiceData.BuyerDtls.Pos
+  );
+  return {
+    id: invoice.id,
+    irn: invoice.irn,
+    invoiceNo: invoice.invoiceData.DocDtls.No,
+    invoiceDate: invoice.invoiceData.DocDtls.Dt,
+    sellerGstin: invoice.invoiceData.SellerDtls.Gstin,
+    sellerName: invoice.invoiceData.SellerDtls.LglNm,
+    buyerGstin: invoice.invoiceData.BuyerDtls.Gstin,
+    buyerName: invoice.invoiceData.BuyerDtls.LglNm,
+    supplyType: invoice.invoiceData.TranDtls.SupTyp,
+    documentType: invoice.invoiceData.DocDtls.Typ,
+    totalValue: invoice.invoiceData.ValDtls.TotInvVal,
+    status: invoice.status,
+    generatedAt: invoice.generatedAt,
+    sellerState: invoice.invoiceData.SellerDtls.Stcd,
+    buyerState: invoice.invoiceData.BuyerDtls.Stcd,
+    pos: invoice.invoiceData.BuyerDtls.Pos,
+    isInterstate: supplyResult.isInterstate,
+    taxType: supplyResult.taxType,
+    reverseCharge: invoice.invoiceData.TranDtls.RegRev === 'Y',
+    itemCount: invoice.invoiceData.ItemList ? invoice.invoiceData.ItemList.length : 0
+  };
+}
+
+/**
+ * Format sample for response
+ */
+function formatSample(id, sample) {
+  const supplyResult = determineSupplyType(sample.SellerDtls.Stcd, sample.BuyerDtls.Pos);
+  return {
+    id: parseInt(id),
+    type: sample.TranDtls.SupTyp,
+    description: dataGenerator.getSampleDescription(id),
+    invoiceNo: sample.DocDtls.No,
+    totalValue: sample.ValDtls.TotInvVal,
+    documentType: sample.DocDtls.Typ,
+    sellerState: sample.SellerDtls.Stcd,
+    buyerState: sample.BuyerDtls.Stcd,
+    pos: sample.BuyerDtls.Pos,
+    isInterstate: supplyResult.isInterstate,
+    taxType: supplyResult.taxType,
+    reverseCharge: sample.TranDtls.RegRev === 'Y',
+    itemCount: sample.ItemList ? sample.ItemList.length : 0,
+    invoiceDate: sample.DocDtls.Dt,
+    endpoint: `/api/e-invoice/sample/${id}`
+  };
+}
+
+// ==================== GET ENDPOINTS ====================
+
+// Get all invoices with advanced generic filtering
 router.get('/invoices', (req, res) => {
-  const { status, supplyType, state, page = 1, limit = 10 } = req.query;
+  try {
+    // Parse query parameters
+    const { page = 1, limit = 10, sortBy = 'generatedAt', sortOrder = 'desc', ...filters } = req.query;
 
-  let filteredInvoices = [...generatedInvoices];
+    // Input validation — reject invalid pagination/sorting params with 400
+    const parsedPage = parseInt(page);
+    const parsedLimit = parseInt(limit);
 
-  // Regex validation for query parameters
-  if (supplyType) {
-    const r = validateField('SupTyp', supplyType);
-    if (!r.valid) {
+    if (isNaN(parsedPage) || parsedPage < 1) {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: `Invalid supplyType: '${supplyType}'. ${r.message}`
+        message: `Invalid page value: '${page}'. Must be a positive integer (1 or greater).`
       });
     }
-  }
 
-  if (state) {
-    const r = validateField('Stcd', state);
-    if (!r.valid) {
+    if (isNaN(parsedLimit) || parsedLimit < 1) {
       return res.status(400).json({
         success: false,
         error: 'Bad Request',
-        message: `Invalid state code: '${state}'. ${r.message}`
+        message: `Invalid limit value: '${limit}'. Must be a positive integer (1-100).`
       });
     }
+
+    if (parsedLimit > 100) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Limit value '${limit}' exceeds maximum of 100.`
+      });
+    }
+
+    if (!['asc', 'desc'].includes(sortOrder)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Bad Request',
+        message: `Invalid sortOrder: '${sortOrder}'. Must be 'asc' or 'desc'.`
+      });
+    }
+
+    const validPage = parsedPage;
+    const validLimit = parsedLimit;
+    const validSortOrder = sortOrder;
+
+    // Validate enum/filter values
+    const VALID_STATUSES = ['Generated', 'Cancelled'];
+    const VALID_SUPPLY_TYPES = ['B2B', 'EXPWP', 'EXPWOP', 'SEZWP', 'SEZWOP', 'DEXP'];
+    const VALID_DOC_TYPES = ['INV', 'CRN', 'DBN'];
+
+    if (filters.status && !VALID_STATUSES.includes(filters.status)) {
+      return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid status: '${filters.status}'. Valid values: ${VALID_STATUSES.join(', ')}` });
+    }
+    if (filters.supplyType && !VALID_SUPPLY_TYPES.includes(filters.supplyType)) {
+      return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid supplyType: '${filters.supplyType}'. Valid values: ${VALID_SUPPLY_TYPES.join(', ')}` });
+    }
+    if (filters.documentType && !VALID_DOC_TYPES.includes(filters.documentType)) {
+      return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid documentType: '${filters.documentType}'. Valid values: ${VALID_DOC_TYPES.join(', ')}` });
+    }
+    if (filters.interstate !== undefined && !['true', 'false'].includes(filters.interstate)) {
+      return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid interstate value: '${filters.interstate}'. Must be 'true' or 'false'.` });
+    }
+    if (filters.reverseCharge !== undefined && !['true', 'false'].includes(filters.reverseCharge)) {
+      return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid reverseCharge value: '${filters.reverseCharge}'. Must be 'true' or 'false'.` });
+    }
+    if (filters.minValue !== undefined && isNaN(parseFloat(filters.minValue))) {
+      return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid minValue: '${filters.minValue}'. Must be a number.` });
+    }
+    if (filters.maxValue !== undefined && isNaN(parseFloat(filters.maxValue))) {
+      return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid maxValue: '${filters.maxValue}'. Must be a number.` });
+    }
+
+    // Regex validation for GSTIN and state code filters
+    if (filters.sellerGstin) { const r = validateField('Gstin', filters.sellerGstin); if (!r.valid) return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid sellerGstin: '${filters.sellerGstin}'. ${r.message}` }); }
+    if (filters.buyerGstin) { const r = validateField('BuyerGstin', filters.buyerGstin); if (!r.valid) return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid buyerGstin: '${filters.buyerGstin}'. ${r.message}` }); }
+    if (filters.sellerState) { const r = validateField('Stcd', filters.sellerState); if (!r.valid) return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid sellerState: '${filters.sellerState}'. ${r.message}` }); }
+    if (filters.buyerState) { const r = validateField('Stcd', filters.buyerState); if (!r.valid) return res.status(400).json({ success: false, error: 'Bad Request', message: `Invalid buyerState: '${filters.buyerState}'. ${r.message}` }); }
+
+    // Map user-friendly query param names to nested data paths
+    const fieldMapping = {
+      supplyType: 'invoiceData.TranDtls.SupTyp',
+      documentType: 'invoiceData.DocDtls.Typ',
+      sellerState: 'invoiceData.SellerDtls.Stcd',
+      buyerState: 'invoiceData.BuyerDtls.Stcd',
+      totalValue: 'invoiceData.ValDtls.TotInvVal',
+      sellerGstin: 'invoiceData.SellerDtls.Gstin',
+      buyerGstin: 'invoiceData.BuyerDtls.Gstin',
+      invoiceNo: 'invoiceData.DocDtls.No',
+    };
+
+    // Separate special filters from generic filters
+    const specialKeys = ['dateFrom', 'dateTo', 'minValue', 'maxValue', 'interstate', 'reverseCharge', 'supplyTypes', 'statuses'];
+    const genericFilters = {};
+    Object.keys(filters).forEach(key => {
+      if (!specialKeys.includes(key)) genericFilters[key] = filters[key];
+    });
+
+    // 1. Apply generic filters
+    let filteredData = filter.apply(generatedInvoices, genericFilters, fieldMapping);
+
+    // 2. Apply special filters
+    if (filters.dateFrom || filters.dateTo) {
+      const from = filters.dateFrom ? new Date(filters.dateFrom) : new Date(0);
+      const to = filters.dateTo ? new Date(filters.dateTo) : new Date('2999-12-31');
+      to.setHours(23, 59, 59, 999);
+      filteredData = filteredData.filter(inv => { const d = new Date(inv.generatedAt); return d >= from && d <= to; });
+    }
+    if (filters.minValue !== undefined) {
+      const min = parseFloat(filters.minValue);
+      if (!isNaN(min)) filteredData = filteredData.filter(inv => inv.invoiceData.ValDtls.TotInvVal >= min);
+    }
+    if (filters.maxValue !== undefined) {
+      const max = parseFloat(filters.maxValue);
+      if (!isNaN(max)) filteredData = filteredData.filter(inv => inv.invoiceData.ValDtls.TotInvVal <= max);
+    }
+    if (filters.interstate !== undefined) {
+      const wantInterstate = filters.interstate === 'true';
+      filteredData = filteredData.filter(inv => {
+        const result = determineSupplyType(inv.invoiceData.SellerDtls.Stcd, inv.invoiceData.BuyerDtls.Pos);
+        return result.valid && result.isInterstate === wantInterstate;
+      });
+    }
+    if (filters.reverseCharge !== undefined) {
+      const wantRC = filters.reverseCharge === 'true';
+      filteredData = filteredData.filter(inv => (inv.invoiceData.TranDtls.RegRev === 'Y') === wantRC);
+    }
+
+    // 3. Sorting
+    const sortFieldMapping = {
+      totalValue: 'invoiceData.ValDtls.TotInvVal',
+      supplyType: 'invoiceData.TranDtls.SupTyp',
+      documentType: 'invoiceData.DocDtls.Typ',
+      sellerState: 'invoiceData.SellerDtls.Stcd',
+      buyerState: 'invoiceData.BuyerDtls.Stcd',
+      invoiceNo: 'invoiceData.DocDtls.No',
+    };
+    const actualSortBy = sortFieldMapping[sortBy] || sortBy;
+    filteredData = filter.sort(filteredData, actualSortBy, validSortOrder);
+
+    // 4. Pagination
+    const paginated = filter.paginate(filteredData, validPage, validLimit);
+    const responseData = paginated.data.map(formatInvoice);
+
+    res.set({
+      'X-Total-Count': paginated.total,
+      'X-Page-Count': paginated.pages,
+      'X-Page': paginated.page,
+      'X-Limit': paginated.limit,
+      'X-Has-Next': paginated.hasNext,
+      'X-Has-Prev': paginated.hasPrev
+    });
+
+    res.json({
+      success: true,
+      data: responseData,
+      pagination: {
+        page: paginated.page,
+        limit: paginated.limit,
+        total: paginated.total,
+        pages: paginated.pages,
+        hasNext: paginated.hasNext,
+        hasPrev: paginated.hasPrev
+      },
+      filters: filters,
+      sort: { by: sortBy, order: validSortOrder }
+    });
+
+  } catch (error) {
+    console.error('Error in /invoices:', error);
+    res.status(500).json({ success: false, message: 'Error fetching invoices', error: error.message });
   }
-
-  // Apply filters
-  if (status) {
-    filteredInvoices = filteredInvoices.filter(inv => inv.status === status);
-  }
-
-  if (supplyType) {
-    filteredInvoices = filteredInvoices.filter(inv =>
-      inv.invoiceData.TranDtls.SupTyp === supplyType
-    );
-  }
-
-  if (state) {
-    filteredInvoices = filteredInvoices.filter(inv =>
-      inv.invoiceData.SellerDtls.Stcd === state ||
-      inv.invoiceData.BuyerDtls.Stcd === state
-    );
-  }
-
-  // Pagination
-  const startIndex = (page - 1) * limit;
-  const endIndex = page * limit;
-  const paginatedInvoices = filteredInvoices.slice(startIndex, endIndex);
-
-  res.json({
-    success: true,
-    data: paginatedInvoices.map(inv => {
-      const supplyResult = determineSupplyType(inv.invoiceData.SellerDtls.Stcd, inv.invoiceData.BuyerDtls.Pos);
-      return {
-        id: inv.id,
-        irn: inv.irn,
-        invoiceNo: inv.invoiceData.DocDtls.No,
-        sellerGstin: inv.invoiceData.SellerDtls.Gstin,
-        buyerGstin: inv.invoiceData.BuyerDtls.Gstin,
-        supplyType: inv.invoiceData.TranDtls.SupTyp,
-        totalValue: inv.invoiceData.ValDtls.TotInvVal,
-        status: inv.status,
-        generatedAt: inv.generatedAt,
-        documentType: inv.invoiceData.DocDtls.Typ,
-        sellerState: inv.invoiceData.SellerDtls.Stcd,
-        buyerState: inv.invoiceData.BuyerDtls.Stcd,
-        isInterstate: supplyResult.isInterstate,
-        taxType: supplyResult.taxType
-      };
-    }),
-    pagination: {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      total: filteredInvoices.length,
-      pages: Math.ceil(filteredInvoices.length / limit)
-    },
-    count: filteredInvoices.length,
-    message: "✅ Dynamically generated test data"
-  });
 });
 
 // Get invoice by numeric ID
 router.get('/invoices/:id', (req, res) => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid invoice ID. Must be a number.'
-    });
+    return res.status(400).json({ success: false, message: 'Invalid invoice ID. Must be a number.' });
   }
 
   const invoice = generatedInvoices.find(inv => inv.id === id);
   if (!invoice) {
-    return res.status(404).json({
-      success: false,
-      message: `Invoice with ID ${id} not found`
-    });
+    return res.status(404).json({ success: false, message: `Invoice with ID ${id} not found` });
   }
 
   // IDOR Prevention: Check ownership if auth context exists
   if (req.auth && invoice.userId && invoice.userId.toString() !== req.auth.user) {
-    return res.status(403).json({
-      success: false,
-      error: 'Forbidden',
-      message: 'You do not have access to this invoice'
-    });
+    return res.status(403).json({ success: false, error: 'Forbidden', message: 'You do not have access to this invoice' });
   }
 
-  res.json({
-    success: true,
-    data: invoice
-  });
+  res.json({ success: true, data: invoice });
 });
 
 // Get invoice by IRN
@@ -397,25 +644,184 @@ router.get('/invoice/:irn', (req, res) => {
   const invoice = generatedInvoices.find(inv => inv.irn === irn);
 
   if (!invoice) {
-    return res.status(404).json({
-      success: false,
-      message: 'Invoice not found'
-    });
+    return res.status(404).json({ success: false, message: 'Invoice not found' });
   }
 
   // IDOR Prevention: Check ownership if auth context exists
   if (req.auth && invoice.userId && invoice.userId.toString() !== req.auth.user) {
-    return res.status(403).json({
-      success: false,
-      error: 'Forbidden',
-      message: 'You do not have access to this invoice'
-    });
+    return res.status(403).json({ success: false, error: 'Forbidden', message: 'You do not have access to this invoice' });
   }
 
-  res.json({
-    success: true,
-    data: invoice
-  });
+  res.json({ success: true, data: invoice });
+});
+
+// Get samples with generic filtering
+router.get('/samples', (req, res) => {
+  try {
+    const samples = dataGenerator.getTestSamples();
+
+    // Convert samples to array format
+    let samplesArray = Object.entries(samples).map(([id, sample]) =>
+      formatSample(id, sample)
+    );
+
+    // Parse query parameters
+    const { page = 1, limit = 100, sortBy = 'id', sortOrder = 'asc', ...filters } = req.query;
+
+    // Apply generic filtering if filters present
+    if (Object.keys(filters).length > 0) {
+      samplesArray = filter.apply(samplesArray, filters);
+    }
+
+    // Apply sorting
+    samplesArray = filter.sort(samplesArray, sortBy, sortOrder);
+
+    // Apply pagination
+    const paginated = filter.paginate(samplesArray, page, limit);
+
+    res.json({
+      success: true,
+      data: paginated.data,
+      count: paginated.data.length,
+      total: samplesArray.length,
+      filters: filters,
+      pagination: {
+        page: paginated.page,
+        limit: paginated.limit,
+        total: paginated.total,
+        pages: paginated.pages
+      },
+      sort: { by: sortBy, order: sortOrder }
+    });
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get specific sample by ID
+router.get('/sample/:id', (req, res) => {
+  try {
+    const id = req.params.id;
+    const samples = dataGenerator.getTestSamples();
+
+    if (samples[id]) {
+      res.json({
+        success: true,
+        data: samples[id],
+        sampleId: parseInt(id),
+        description: dataGenerator.getSampleDescription(id),
+        type: samples[id].TranDtls.SupTyp,
+        metadata: formatSample(id, samples[id])
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: `Sample ${id} not found. Available samples: 1-${Object.keys(samples).length}`,
+        availableSamples: Object.keys(samples).map(sid => formatSample(sid, samples[sid]))
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /filter-options - Get filter metadata
+router.get('/filter-options', (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: {
+        statuses: ['Generated', 'Cancelled'],
+        supplyTypes: ['B2B', 'EXPWP', 'EXPWOP', 'SEZWP', 'SEZWOP', 'DEXP'],
+        states: Object.keys(dataGenerator.states).map(code => ({
+          code: code,
+          name: dataGenerator.states[code].name
+        })),
+        documentTypes: ['INV', 'CRN', 'DBN']
+      },
+      message: 'Filter options loaded successfully'
+    });
+  } catch (error) {
+    console.error('Error in /filter-options endpoint:', error);
+    res.status(500).json({ success: false, message: 'Error loading filter options', error: error.message });
+  }
+});
+
+// Get available fields for filtering
+router.get('/fields', (req, res) => {
+  try {
+    const invoiceFields = generatedInvoices.length > 0 ?
+      Object.keys(formatInvoice(generatedInvoices[0])) : [];
+
+    const samples = dataGenerator.getTestSamples();
+    const sampleFields = Object.keys(samples).length > 0 ?
+      Object.keys(formatSample('1', samples[1])) : [];
+
+    const nestedFields = [
+      'invoiceData.TranDtls.SupTyp', 'invoiceData.TranDtls.RegRev',
+      'invoiceData.DocDtls.No', 'invoiceData.DocDtls.Typ', 'invoiceData.DocDtls.Dt',
+      'invoiceData.SellerDtls.Gstin', 'invoiceData.SellerDtls.LglNm', 'invoiceData.SellerDtls.Stcd',
+      'invoiceData.BuyerDtls.Gstin', 'invoiceData.BuyerDtls.LglNm', 'invoiceData.BuyerDtls.Stcd', 'invoiceData.BuyerDtls.Pos',
+      'invoiceData.ValDtls.TotInvVal', 'invoiceData.ValDtls.AssVal', 'invoiceData.ValDtls.IgstVal', 'invoiceData.ValDtls.CgstVal', 'invoiceData.ValDtls.SgstVal'
+    ];
+
+    res.json({
+      success: true,
+      data: {
+        invoiceFields, sampleFields, nestedFields,
+        fieldTypes: {
+          string: ['irn', 'invoiceNo', 'sellerGstin', 'buyerGstin', 'sellerName', 'buyerName', 'status', 'supplyType', 'documentType', 'sellerState', 'buyerState'],
+          number: ['id', 'totalValue', 'itemCount'],
+          boolean: ['isInterstate', 'reverseCharge'],
+          date: ['generatedAt', 'invoiceDate'],
+          nested: nestedFields
+        },
+        filterOperators: {
+          exact: 'field=value', multiple: 'field=value1,value2,value3',
+          lessThan: 'field=lt:value', greaterThan: 'field=gt:value',
+          equalTo: 'field=eq:value', notEqualTo: 'field=ne:value',
+          boolean: 'field=true or field=false', search: 'search=term'
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Generic search across all endpoints
+router.get('/search', (req, res) => {
+  try {
+    const { q: query, type = 'all', ...filters } = req.query;
+
+    if (!query) {
+      return res.status(400).json({ success: false, message: 'Search query (q) is required' });
+    }
+
+    let results = [];
+
+    // Search in invoices
+    if (type === 'all' || type === 'invoices') {
+      const invoiceResults = filter.apply(generatedInvoices, { search: query, ...filters });
+      results.push(...invoiceResults.map(inv => ({ type: 'invoice', data: formatInvoice(inv), score: 1.0 })));
+    }
+
+    // Search in samples
+    if (type === 'all' || type === 'samples') {
+      const samples = dataGenerator.getTestSamples();
+      const sampleArray = Object.entries(samples).map(([id, sample]) => formatSample(id, sample));
+      const sampleResults = filter.apply(sampleArray, { search: query, ...filters });
+      results.push(...sampleResults.map(sample => ({ type: 'sample', data: sample, score: 1.0 })));
+    }
+
+    results.sort((a, b) => b.score - a.score);
+
+    res.json({ success: true, query, type, count: results.length, results, filters });
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // Generate E-Invoice (Original endpoint)
@@ -477,36 +883,14 @@ router.post('/generate', (req, res) => {
       }
     }
 
-    // Validate positive amounts
-    if (invoiceData.ValDtls && invoiceData.ValDtls.TotInvVal !== undefined) {
-      if (invoiceData.ValDtls.TotInvVal <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Validation failed',
-          errors: ['Amount must be positive: TotInvVal must be greater than 0']
-        });
-      }
-    }
-
-    // Validate item-level amounts
-    if (invoiceData.ItemList && Array.isArray(invoiceData.ItemList)) {
-      for (let i = 0; i < invoiceData.ItemList.length; i++) {
-        const item = invoiceData.ItemList[i];
-        if (item.UnitPrice !== undefined && item.UnitPrice < 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors: [`ItemList[${i}].UnitPrice must not be negative`]
-          });
-        }
-        if (item.TotItemVal !== undefined && item.TotItemVal < 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors: [`ItemList[${i}].TotItemVal must not be negative`]
-          });
-        }
-      }
+    // Validate amounts (positive values, cross-field math)
+    const amountErrors = validateAmounts(invoiceData);
+    if (amountErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount validation failed',
+        errors: amountErrors
+      });
     }
 
     // Check payload size
@@ -518,19 +902,39 @@ router.post('/generate', (req, res) => {
       });
     }
 
-    // Generate IRN
-    const irn = generateIRN();
+    // Check for duplicate document (same SellerGstin + DocType + DocNo + DocDate)
+    const existingInvoice = findDuplicateInvoice(invoiceData);
+    if (existingInvoice) {
+      return res.status(409).json({
+        success: false,
+        message: 'IRN already generated for this document',
+        error: 'Duplicate document: An invoice with the same SellerGstin, DocType, DocNo, and DocDate already exists',
+        data: {
+          Irn: existingInvoice.irn,
+          AckNo: existingInvoice.ackNo,
+          AckDt: existingInvoice.ackDt,
+          generatedAt: existingInvoice.generatedAt
+        }
+      });
+    }
+
+    // Generate deterministic IRN (SHA-256 hash of SellerGstin + DocType + DocNo + DocDate)
+    const irn = generateIRN(
+      invoiceData.SellerDtls.Gstin,
+      invoiceData.DocDtls.Typ,
+      invoiceData.DocDtls.No,
+      invoiceData.DocDtls.Dt
+    );
+    const ackNo = `ACK${Date.now()}${Math.floor(Math.random() * 100000)}`;
+    const ackDt = new Date().toLocaleDateString('en-GB');
 
     const response = {
       success: true,
       data: {
         Irn: irn,
-        AckNo: `ACK${Date.now()}`,
-        AckDt: new Date().toLocaleDateString('en-GB'),
-        SignedInvoice: {
-          ...invoiceData,
-          IRN: irn
-        },
+        AckNo: ackNo,
+        AckDt: ackDt,
+        SignedInvoice: invoiceData,
         QRCode: `QR_${irn}`
       },
       message: 'E-Invoice generated successfully',
@@ -541,12 +945,14 @@ router.post('/generate', (req, res) => {
     generatedInvoices.push({
       id: invoiceCounter++,
       irn: irn,
+      ackNo: ackNo,
+      ackDt: ackDt,
       invoiceData: invoiceData,
       status: 'Generated',
       generatedAt: new Date().toISOString()
     });
 
-    res.json(response);
+    res.status(201).json(response);
 
   } catch (error) {
     console.error('Error:', error);
@@ -567,6 +973,7 @@ router.post('/validate', (req, res) => {
     const regexErrors = validateInvoiceRegex(invoiceData);
     if (regexErrors.length > 0) {
       return res.status(400).json({
+        success: false,
         isValid: false,
         errors: regexErrors.map(error => ({ message: error, type: 'regex' }))
       });
@@ -577,6 +984,7 @@ router.post('/validate', (req, res) => {
 
     if (errors.length > 0) {
       return res.status(400).json({
+        success: false,
         isValid: false,
         errors: errors.map(error => ({ message: error }))
       });
@@ -606,6 +1014,7 @@ router.post('/validate', (req, res) => {
         }
         if (taxErrors.length > 0) {
           return res.status(400).json({
+            success: false,
             isValid: false,
             errors: taxErrors.map(e => ({ message: e, type: 'tax_mismatch' }))
           });
@@ -613,13 +1022,25 @@ router.post('/validate', (req, res) => {
       }
     }
 
+    // Amount validations (positive values, cross-field math)
+    const amountErrors = validateAmounts(invoiceData);
+    if (amountErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        isValid: false,
+        errors: amountErrors.map(e => ({ message: e, type: 'amount' }))
+      });
+    }
+
     res.json({
+      success: true,
       isValid: true,
-      message: 'E-Invoice data is valid for basic checks'
+      message: 'E-Invoice data is valid'
     });
 
   } catch (error) {
     res.status(500).json({
+      success: false,
       isValid: false,
       message: 'Validation error',
       error: error.message
@@ -689,9 +1110,10 @@ router.post('/cancel', (req, res) => {
 
     // Prevent double cancellation
     if (invoice.status === 'Cancelled') {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         message: 'Invoice is already cancelled',
+        error: 'Conflict: This invoice has already been cancelled',
         data: {
           Irn: irn,
           status: 'Cancelled',

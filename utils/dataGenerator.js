@@ -18,6 +18,10 @@ class EInvoiceDataGenerator {
     this.industries = ["Electronics", "Textiles", "Automobiles", "Chemicals", "Metals"];
   }
 
+  round2(n) {
+    return Math.round(n * 100) / 100;
+  }
+
   getTestSamples() {
     return {
       // Sample 1: B2B Intrastate (CGST + SGST)
@@ -278,6 +282,7 @@ class EInvoiceDataGenerator {
     // Determine Place of Supply (Pos) — the field that actually drives tax type
     // SEZ and Export supplies always use Pos = "96" (inter-state, IGST)
     const isExportOrSez = ["EXPWP", "EXPWOP", "SEZWP", "SEZWOP"].includes(supplyType);
+    const isExport = ["EXPWP", "EXPWOP"].includes(supplyType);
     const pos = isExportOrSez ? "96" : buyerState;
 
     const product = this.products[Math.floor(Math.random() * this.products.length)];
@@ -285,10 +290,24 @@ class EInvoiceDataGenerator {
     const price = Math.floor(Math.random() * (product.priceRange[1] - product.priceRange[0])) + product.priceRange[0];
     const total = qty * price;
     const taxRate = isExportOrSez && supplyType.endsWith("WOP") ? 0 : 18;
-    const tax = (total * taxRate) / 100;
+    const tax = this.round2((total * taxRate) / 100);
+    const halfTax = this.round2(tax / 2);
 
     // Inter/Intra-state is determined by sellerState vs Pos (NIC rule)
     const isInterstate = sellerState !== pos;
+
+    // Pre-compute rounded monetary values
+    const igstAmt = isInterstate ? tax : 0;
+    const cgstAmt = isInterstate ? 0 : halfTax;
+    const sgstAmt = isInterstate ? 0 : halfTax;
+    const totItemVal = this.round2(total + tax);
+    const totInvVal = this.round2(total + tax);
+
+    // Generate company names for reuse across fields
+    const sellerCompany = this.companies[Math.floor(Math.random() * this.companies.length)];
+    const sellerIndustry = this.industries[Math.floor(Math.random() * this.industries.length)];
+    const buyerCompany = this.companies[Math.floor(Math.random() * this.companies.length)];
+    const buyerIndustry = this.industries[Math.floor(Math.random() * this.industries.length)];
 
     return {
       Version: "1.1",
@@ -296,27 +315,40 @@ class EInvoiceDataGenerator {
       DocDtls: { Typ: "INV", No: `INV/${new Date().getFullYear()}/${Math.floor(Math.random() * 1000) + 1}`, Dt: new Date().toLocaleDateString('en-GB') },
       SellerDtls: {
         Gstin: this.generateGSTIN(sellerState),
-        LglNm: `${this.companies[Math.floor(Math.random() * this.companies.length)]} ${this.industries[Math.floor(Math.random() * this.industries.length)]} Pvt Ltd`,
-        Addr1: "Address Line 1", Loc: this.states[sellerState].capital, Pin: this.states[sellerState].pincodes[0], Stcd: sellerState
+        LglNm: `${sellerCompany} ${sellerIndustry} Pvt Ltd`,
+        TrdNm: `${sellerCompany} ${sellerIndustry}`,
+        Addr1: "Address Line 1",
+        Addr2: "Floor 2",
+        Loc: this.states[sellerState].capital,
+        Pin: this.states[sellerState].pincodes[0],
+        Stcd: sellerState,
+        Ph: `98${Math.floor(10000000 + Math.random() * 90000000)}`,
+        Em: `sales@${sellerCompany.toLowerCase()}${sellerIndustry.toLowerCase()}.com`
       },
       BuyerDtls: {
-        Gstin: supplyType === "EXPWP" ? "URP" : this.generateGSTIN(buyerState),
-        LglNm: `${this.companies[Math.floor(Math.random() * this.companies.length)]} ${this.industries[Math.floor(Math.random() * this.industries.length)]} Ltd`,
+        Gstin: isExport ? "URP" : this.generateGSTIN(buyerState),
+        LglNm: `${buyerCompany} ${buyerIndustry} Ltd`,
+        TrdNm: `${buyerCompany} ${buyerIndustry}`,
         Pos: pos,
-        Addr1: "Buyer Address", Loc: isExportOrSez && supplyType.startsWith("EXP") ? "PORT AREA" : this.states[buyerState].capital,
-        Pin: isExportOrSez && supplyType.startsWith("EXP") ? 999999 : this.states[buyerState].pincodes[0], Stcd: isExportOrSez && supplyType.startsWith("EXP") ? "96" : buyerState
+        Addr1: "Buyer Address",
+        Addr2: "Block B",
+        Loc: isExport ? "PORT AREA" : this.states[buyerState].capital,
+        Pin: isExport ? 999999 : this.states[buyerState].pincodes[0],
+        Stcd: isExport ? "96" : buyerState,
+        Ph: `97${Math.floor(10000000 + Math.random() * 90000000)}`,
+        Em: `purchase@${buyerCompany.toLowerCase()}${buyerIndustry.toLowerCase()}.com`
       },
       ItemList: [{
         SlNo: "1", IsServc: "N", PrdDesc: product.name, HsnCd: product.hsn,
         Qty: qty, Unit: "NOS", UnitPrice: price, TotAmt: total, AssAmt: total,
-        GstRt: taxRate, IgstAmt: isInterstate ? tax : 0,
-        CgstAmt: isInterstate ? 0 : tax / 2, SgstAmt: isInterstate ? 0 : tax / 2,
-        TotItemVal: total + tax
+        GstRt: taxRate, IgstAmt: igstAmt,
+        CgstAmt: cgstAmt, SgstAmt: sgstAmt,
+        TotItemVal: totItemVal
       }],
       ValDtls: {
-        AssVal: total, CgstVal: isInterstate ? 0 : tax / 2,
-        SgstVal: isInterstate ? 0 : tax / 2, IgstVal: isInterstate ? tax : 0,
-        TotInvVal: total + tax
+        AssVal: total, CgstVal: cgstAmt,
+        SgstVal: sgstAmt, IgstVal: igstAmt,
+        TotInvVal: totInvVal
       }
     };
   }
