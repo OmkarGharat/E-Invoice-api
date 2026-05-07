@@ -824,6 +824,43 @@ router.get('/search', (req, res) => {
   }
 });
 
+// Get aggregate statistics
+router.get('/stats', (req, res) => {
+  try {
+    const totalInvoices = generatedInvoices.length;
+    const totalValue = generatedInvoices.reduce(
+      (sum, inv) => sum + (inv.invoiceData?.ValDtls?.TotInvVal || 0), 0
+    );
+
+    const statusBreakdown = {};
+    const supplyTypeBreakdown = {};
+
+    generatedInvoices.forEach(inv => {
+      // Status counts
+      const status = inv.status || 'Unknown';
+      statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
+
+      // Supply type counts
+      const supplyType = inv.invoiceData?.TranDtls?.SupTyp || 'Unknown';
+      supplyTypeBreakdown[supplyType] = (supplyTypeBreakdown[supplyType] || 0) + 1;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        totalInvoices,
+        totalValue: Math.round(totalValue * 100) / 100,
+        averageValue: totalInvoices > 0 ? Math.round((totalValue / totalInvoices) * 100) / 100 : 0,
+        statusBreakdown,
+        supplyTypeBreakdown
+      }
+    });
+  } catch (error) {
+    console.error('Error in /stats:', error);
+    res.status(500).json({ success: false, message: 'Error fetching stats', error: error.message });
+  }
+});
+
 // Generate E-Invoice (Original endpoint)
 router.post('/generate', (req, res) => {
   try {
