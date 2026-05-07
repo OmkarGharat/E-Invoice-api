@@ -22,6 +22,16 @@ app.use(bodyParser.json({ limit: '100kb' })); // Limit payload to 100kb to preve
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Health check endpoint — lightweight, no auth required
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
 // Method Enforcement — must run BEFORE security/auth middleware
 // so wrong-method requests get 405 instead of 400/401/415
 const enforceAllowedMethods = require('./middleware/methodEnforcement');
