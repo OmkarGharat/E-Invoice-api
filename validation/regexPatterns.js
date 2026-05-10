@@ -112,9 +112,9 @@ const PATTERNS = {
 
   // ==================== ItemList ====================
   SlNo: {
-    regex: /^[0-9]{1,6}$/,
-    pattern: '^[0-9]{1,6}$',
-    message: 'Serial number must be a number (1-6 digits)',
+    regex: /^[1-9][0-9]{0,5}$/,
+    pattern: '^[1-9][0-9]{0,5}$',
+    message: 'Serial number must be between 1 and 999999 (cannot be 0)',
     length: { min: 1, max: 6 }
   },
   IsServc: {
@@ -128,6 +128,12 @@ const PATTERNS = {
     pattern: '^[0-9]{4,8}$',
     message: 'HSN code must be 4 to 8 digits',
     length: { min: 4, max: 8 }
+  },
+  Unit: {
+    regex: /^[A-Z]{2,8}$/,
+    pattern: '^[A-Z]{2,8}$',
+    message: 'Unit must be 2-8 uppercase letters only (e.g., NOS, KGS, MTR, PCS, LTR, BAG, BOX)',
+    length: { min: 2, max: 8 }
   },
 
   // ==================== Cancel Endpoint ====================
@@ -235,7 +241,13 @@ function validateInvoiceRegex(data) {
     }
     if (dd.Dt !== undefined) {
       const r = validateField('DocDt', dd.Dt);
-      if (!r.valid) errors.push(`DocDtls.Dt: ${r.message}`);
+      if (!r.valid) {
+        errors.push(`DocDtls.Dt: ${r.message}`);
+      } else {
+        // Semantic date validation: calendar validity + future date check
+        const dateResult = validateDocDate(dd.Dt);
+        if (!dateResult.valid) errors.push(dateResult.message);
+      }
     }
   }
 
@@ -259,7 +271,9 @@ function validateInvoiceRegex(data) {
       if (!r.valid) errors.push(`SellerDtls.${r.message}`);
     }
     if (sd.Pin !== undefined) {
-      const r = validateField('Pin', sd.Pin);
+      // Trim spaces from pin before validation (e.g. "110 001" -> "110001")
+      const pinValue = typeof sd.Pin === 'string' ? sd.Pin.replace(/\s/g, '') : sd.Pin;
+      const r = validateField('Pin', pinValue);
       if (!r.valid) errors.push(`SellerDtls.${r.message}`);
     }
     if (sd.Stcd !== undefined) {
@@ -292,6 +306,12 @@ function validateInvoiceRegex(data) {
       const r = validateField('Loc', bd.Loc);
       if (!r.valid) errors.push(`BuyerDtls.${r.message}`);
     }
+    if (bd.Pin !== undefined) {
+      // Trim spaces from pin before validation
+      const pinValue = typeof bd.Pin === 'string' ? bd.Pin.replace(/\s/g, '') : bd.Pin;
+      const r = validateField('Pin', pinValue);
+      if (!r.valid) errors.push(`BuyerDtls.${r.message}`);
+    }
     if (bd.Stcd !== undefined) {
       const r = validateField('Stcd', bd.Stcd);
       if (!r.valid) errors.push(`BuyerDtls.${r.message}`);
@@ -312,6 +332,10 @@ function validateInvoiceRegex(data) {
       }
       if (item.HsnCd !== undefined) {
         const r = validateField('HsnCd', item.HsnCd);
+        if (!r.valid) errors.push(`${prefix}.${r.message}`);
+      }
+      if (item.Unit !== undefined) {
+        const r = validateField('Unit', item.Unit);
         if (!r.valid) errors.push(`${prefix}.${r.message}`);
       }
     });
@@ -388,12 +412,46 @@ function determineSupplyType(sellerStateCode, placeOfSupply) {
   };
 }
 
+/**
+ * Validate a document date string for calendar validity and temporal bounds.
+ * Must be called AFTER the regex format check passes.
+ * @param {string} dateStr - Date in DD/MM/YYYY format
+ * @returns {{ valid: boolean, message: string|null }}
+ */
+function validateDocDate(dateStr) {
+  const parts = dateStr.split('/');
+  const day = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  const year = parseInt(parts[2], 10);
+
+  // Create date and verify it matches input (catches Feb 31, Apr 31, non-leap Feb 29, etc.)
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return { valid: false, message: `DocDtls.Dt: '${dateStr}' is not a valid calendar date` };
+  }
+
+  // Year must be >= 2017 (GST / e-Invoicing era)
+  if (year < 2017) {
+    return { valid: false, message: `DocDtls.Dt: Year ${year} is invalid. E-Invoicing requires year >= 2017` };
+  }
+
+  // Cannot be a future date (compare against today in local timezone)
+  const now = new Date();
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  if (date > todayEnd) {
+    return { valid: false, message: `DocDtls.Dt: '${dateStr}' cannot be a future date` };
+  }
+
+  return { valid: true, message: null };
+}
+
 module.exports = {
   PATTERNS,
   VALID_GST_STATE_CODES,
   validateField,
   validateFields,
   validateInvoiceRegex,
+  validateDocDate,
   isValidGstStateCode,
   determineSupplyType
 };

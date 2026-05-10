@@ -143,6 +143,47 @@ function validateAmounts(invoiceData) {
   return errors;
 }
 
+/**
+ * Shared business rule validation — used by both /generate and /validate
+ * Validates SlNo uniqueness, Qty conditional rules, and GstRt allowed values.
+ */
+function validateBusinessRules(invoiceData) {
+  const errors = [];
+
+  if (invoiceData.ItemList && Array.isArray(invoiceData.ItemList)) {
+    // Check SlNo uniqueness
+    const slNos = invoiceData.ItemList.map(item => String(item.SlNo));
+    const seen = new Set();
+    const duplicates = new Set();
+    for (const slNo of slNos) {
+      if (seen.has(slNo)) duplicates.add(slNo);
+      seen.add(slNo);
+    }
+    if (duplicates.size > 0) {
+      errors.push(`Duplicate SlNo values found in ItemList: ${[...duplicates].join(', ')}. Each SlNo must be unique.`);
+    }
+
+    // Per-item validations
+    const VALID_GST_RATES = [0, 0.1, 0.25, 1, 1.5, 3, 5, 7.5, 12, 18, 28];
+
+    for (let i = 0; i < invoiceData.ItemList.length; i++) {
+      const item = invoiceData.ItemList[i];
+
+      // Qty must be > 0 for goods (IsServc != 'Y'). Services (IsServc='Y') can have Qty=0.
+      if (item.IsServc !== 'Y' && item.Qty !== undefined && item.Qty <= 0) {
+        errors.push(`ItemList[${i}].Qty must be greater than 0 for goods (IsServc is not 'Y')`);
+      }
+
+      // GstRt must be a valid GST rate
+      if (item.GstRt !== undefined && !VALID_GST_RATES.includes(item.GstRt)) {
+        errors.push(`ItemList[${i}].GstRt (${item.GstRt}) is not a valid GST rate. Allowed values: ${VALID_GST_RATES.join(', ')}`);
+      }
+    }
+  }
+
+  return errors;
+}
+
 // ==================== DYNAMIC GENERATION ENDPOINTS ====================
 
 // Generate dynamic invoice
@@ -828,31 +869,39 @@ router.get('/search', (req, res) => {
 router.get('/stats', (req, res) => {
   try {
     const totalInvoices = generatedInvoices.length;
+    const activeInvoices = generatedInvoices.filter(inv => inv.status === 'Generated');
+    const cancelledInvoices = generatedInvoices.filter(inv => inv.status === 'Cancelled');
     const totalValue = generatedInvoices.reduce(
       (sum, inv) => sum + (inv.invoiceData?.ValDtls?.TotInvVal || 0), 0
     );
 
     const statusBreakdown = {};
     const supplyTypeBreakdown = {};
+    const byState = {};
 
     generatedInvoices.forEach(inv => {
-      // Status counts
       const status = inv.status || 'Unknown';
       statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
 
-      // Supply type counts
       const supplyType = inv.invoiceData?.TranDtls?.SupTyp || 'Unknown';
       supplyTypeBreakdown[supplyType] = (supplyTypeBreakdown[supplyType] || 0) + 1;
+
+      const state = inv.invoiceData?.SellerDtls?.Stcd || 'Unknown';
+      byState[state] = (byState[state] || 0) + 1;
     });
 
     res.json({
       success: true,
       data: {
         totalInvoices,
+        generated: activeInvoices.length,
+        cancelled: cancelledInvoices.length,
         totalValue: Math.round(totalValue * 100) / 100,
+        cancelledValue: Math.round(cancelledInvoices.reduce((sum, inv) => sum + (inv.invoiceData?.ValDtls?.TotInvVal || 0), 0) * 100) / 100,
         averageValue: totalInvoices > 0 ? Math.round((totalValue / totalInvoices) * 100) / 100 : 0,
         statusBreakdown,
-        supplyTypeBreakdown
+        supplyTypeBreakdown,
+        byState
       }
     });
   } catch (error) {
@@ -927,6 +976,16 @@ router.post('/generate', (req, res) => {
         success: false,
         message: 'Amount validation failed',
         errors: amountErrors
+      });
+    }
+
+    // Business rule validation (SlNo uniqueness, Qty conditional, GstRt allowed values)
+    const businessErrors = validateBusinessRules(invoiceData);
+    if (businessErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Business rule validation failed',
+        errors: businessErrors
       });
     }
 
@@ -1069,6 +1128,16 @@ router.post('/validate', (req, res) => {
       });
     }
 
+    // Business rule validation (SlNo uniqueness, Qty conditional, GstRt allowed values)
+    const businessErrors = validateBusinessRules(invoiceData);
+    if (businessErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        isValid: false,
+        errors: businessErrors.map(e => ({ message: e, type: 'business_rule' }))
+      });
+    }
+
     res.json({
       success: true,
       isValid: true,
@@ -1199,114 +1268,6 @@ router.get('/sample', (req, res) => {
   });
 });
 
-// Get specific sample by ID
-router.get('/sample/:id', (req, res) => {
-  try {
-    const id = req.params.id;
-    const samples = dataGenerator.getTestSamples();
-
-    if (samples[id]) {
-      const sample = samples[id];
-      const supplyResult = determineSupplyType(sample.SellerDtls.Stcd, sample.BuyerDtls.Pos);
-      res.json({
-        success: true,
-        data: samples[id],
-        sampleId: parseInt(id),
-        description: dataGenerator.getSampleDescription(id),
-        type: samples[id].TranDtls.SupTyp,
-        metadata: {
-          id: parseInt(id),
-          type: sample.TranDtls.SupTyp,
-          description: dataGenerator.getSampleDescription(id),
-          invoiceNo: sample.DocDtls.No,
-          totalValue: sample.ValDtls.TotInvVal,
-          documentType: sample.DocDtls.Typ,
-          sellerState: sample.SellerDtls.Stcd,
-          buyerState: sample.BuyerDtls.Stcd,
-          pos: sample.BuyerDtls.Pos,
-          isInterstate: supplyResult.isInterstate,
-          taxType: supplyResult.taxType,
-          reverseCharge: sample.TranDtls.RegRev === 'Y',
-          itemCount: sample.ItemList ? sample.ItemList.length : 0,
-          invoiceDate: sample.DocDtls.Dt,
-          endpoint: `/api/e-invoice/sample/${id}`
-        }
-      });
-    } else {
-      res.status(404).json({
-        success: false,
-        message: `Sample ${id} not found. Available samples: ${Object.keys(samples).join(', ')}`,
-        availableSamples: Object.keys(samples)
-      });
-    }
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Add this route for /samples (plural)
-router.get('/samples', (req, res) => {
-  try {
-    const testSamples = dataGenerator.getTestSamples();
-    const samples = Object.keys(testSamples).map(key => {
-      const sample = testSamples[key];
-      const supplyResult = determineSupplyType(sample.SellerDtls.Stcd, sample.BuyerDtls.Pos);
-      return {
-        id: parseInt(key),
-        type: sample.TranDtls.SupTyp,
-        description: dataGenerator.getSampleDescription(parseInt(key)),
-        totalValue: sample.ValDtls.TotInvVal,
-        invoiceNo: sample.DocDtls.No,
-        sellerState: sample.SellerDtls.Stcd,
-        buyerState: sample.BuyerDtls.Stcd,
-        pos: sample.BuyerDtls.Pos,
-        isInterstate: supplyResult.isInterstate,
-        taxType: supplyResult.taxType
-      };
-    });
-
-    res.json({
-      success: true,
-      data: samples
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Error loading samples',
-      error: error.message
-    });
-  }
-});
-
-// GET /api/e-invoice/filter-options - Get filter metadata
-router.get('/filter-options', (req, res) => {
-  try {
-    res.json({
-      success: true,
-      data: {
-        statuses: ['Generated', 'Cancelled'],
-        supplyTypes: ['B2B', 'EXPWP', 'EXPWOP', 'SEZWP', 'SEZWOP', 'DEXP'],
-        states: Object.keys(dataGenerator.states).map(code => ({
-          code: code,
-          name: dataGenerator.states[code].name
-        })),
-        documentTypes: ['INV', 'CRN', 'DBN']
-      },
-      message: 'Filter options loaded successfully'
-    });
-  } catch (error) {
-    console.error('Error in /filter-options endpoint:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error loading filter options',
-      error: error.message
-    });
-  }
-});
-
 // Get validation rules
 router.get('/validation-rules', (req, res) => {
   const { PATTERNS } = require('../validation/regexPatterns');
@@ -1362,35 +1323,6 @@ router.get('/test-scenarios', (req, res) => {
       totalInvoices: generatedInvoices.length,
       message: "Ready for API testing with dynamic data"
     }
-  });
-});
-
-// Get statistics
-router.get('/stats', (req, res) => {
-  const activeInvoices = generatedInvoices.filter(inv => inv.status === 'Generated');
-  const cancelledInvoices = generatedInvoices.filter(inv => inv.status === 'Cancelled');
-
-  const stats = {
-    totalInvoices: generatedInvoices.length,
-    generated: activeInvoices.length,
-    cancelled: cancelledInvoices.length,
-    bySupplyType: {},
-    byState: {},
-    totalValue: activeInvoices.reduce((sum, inv) => sum + inv.invoiceData.ValDtls.TotInvVal, 0),
-    cancelledValue: cancelledInvoices.reduce((sum, inv) => sum + inv.invoiceData.ValDtls.TotInvVal, 0)
-  };
-
-  generatedInvoices.forEach(inv => {
-    const supplyType = inv.invoiceData.TranDtls.SupTyp;
-    const state = inv.invoiceData.SellerDtls.Stcd;
-
-    stats.bySupplyType[supplyType] = (stats.bySupplyType[supplyType] || 0) + 1;
-    stats.byState[state] = (stats.byState[state] || 0) + 1;
-  });
-
-  res.json({
-    success: true,
-    data: stats
   });
 });
 

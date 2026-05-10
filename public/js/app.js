@@ -297,19 +297,14 @@ async function loadStats() {
         }
         const data = await response.json();
 
-        const totalInvoicesEl = document.getElementById('totalInvoices');
         const apiStatusEl = document.getElementById('apiStatus');
-
-        if (totalInvoicesEl) {
-            totalInvoicesEl.textContent = data.totalInvoices || '--';
-        }
 
         if (apiStatusEl) {
             apiStatusEl.textContent = data.status === 'OK' ? '✅ Online' : '❌ Offline';
             apiStatusEl.className = data.status === 'OK' ? 'h2 mb-1 text-success' : 'h2 mb-1 text-danger';
         }
 
-        // Load additional stats
+        // Load invoice stats (totalInvoices + totalValue)
         const statsHeaders = {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
@@ -321,6 +316,12 @@ async function loadStats() {
             const statsData = await statsResponse.json();
 
             if (statsData.success) {
+                // Fix: totalInvoices comes from /api/e-invoice/stats, NOT /health
+                const totalInvoicesEl = document.getElementById('totalInvoices');
+                if (totalInvoicesEl) {
+                    totalInvoicesEl.textContent = statsData.data.totalInvoices;
+                }
+
                 const totalValueEl = document.getElementById('totalValue');
                 if (totalValueEl) {
                     const totalValue = new Intl.NumberFormat('en-IN', {

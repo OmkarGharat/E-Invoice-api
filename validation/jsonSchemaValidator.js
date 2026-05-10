@@ -44,6 +44,7 @@ const INVOICE_SCHEMA = {
                 Pos: { type: "string", pattern: "^([1-9]|[0-9]{2})$" },
                 Addr1: { type: "string", minLength: 1, maxLength: 100 },
                 Loc: { type: "string", minLength: 3, maxLength: 50 },
+                Pin: { type: "number", minimum: 100000, maximum: 999999 },
                 Stcd: { type: "string", pattern: "^([1-9]|[0-9]{2})$" }
             }
         },
@@ -55,16 +56,16 @@ const INVOICE_SCHEMA = {
                 type: "object",
                 required: ["SlNo", "PrdDesc", "HsnCd", "Qty", "Unit", "UnitPrice", "TotAmt", "AssAmt", "GstRt", "IgstAmt", "CgstAmt", "SgstAmt", "TotItemVal"],
                 properties: {
-                    SlNo: { type: "string", pattern: "^[0-9]{1,6}$" },
+                    SlNo: { type: "string", pattern: "^[1-9][0-9]{0,5}$" },
                     IsServc: { type: "string", pattern: "^[YN]$" },
                     PrdDesc: { type: "string", minLength: 3, maxLength: 300 },
                     HsnCd: { type: "string", pattern: "^[0-9]{4,8}$" },
                     Qty: { type: "number" },
-                    Unit: { type: "string" },
+                    Unit: { type: "string", pattern: "^[A-Z]{2,8}$" },
                     UnitPrice: { type: "number" },
                     TotAmt: { type: "number" },
                     AssAmt: { type: "number" },
-                    GstRt: { type: "number" },
+                    GstRt: { type: "number", enum: [0, 0.1, 0.25, 1, 1.5, 3, 5, 7.5, 12, 18, 28] },
                     IgstAmt: { type: "number" },
                     CgstAmt: { type: "number" },
                     SgstAmt: { type: "number" },
