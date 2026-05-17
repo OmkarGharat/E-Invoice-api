@@ -216,6 +216,116 @@ function validateBusinessRules(invoiceData) {
   return errors;
 }
 
+/**
+ * Shared GSTIN ↔ State Code consistency validation — used by both /generate and /validate
+ * 
+ * The first 2 digits of a GSTIN encode the state code. If the user-provided
+ * Stcd (or Pos) doesn't match these digits, the inter/intra-state tax
+ * determination will be wrong. This validation prevents that.
+ *
+ * Rules:
+ *   1. SellerDtls.Gstin[0:2] must match SellerDtls.Stcd
+ *   2. BuyerDtls.Gstin[0:2] must match BuyerDtls.Stcd (skip if Gstin = "URP")
+ */
+function validateGstinStateConsistency(invoiceData) {
+  const errors = [];
+
+  // Helper: normalize state code to 2-digit string for comparison
+  const normalize = (code) => String(code).padStart(2, '0');
+
+  // --- Seller GSTIN vs Stcd ---
+  if (invoiceData.SellerDtls?.Gstin && invoiceData.SellerDtls?.Stcd) {
+    const gstinState = invoiceData.SellerDtls.Gstin.substring(0, 2);
+    const declaredState = normalize(invoiceData.SellerDtls.Stcd);
+    if (gstinState !== declaredState) {
+      errors.push(
+        `SellerDtls.Stcd ('${invoiceData.SellerDtls.Stcd}') does not match the state code in SellerDtls.Gstin ('${gstinState}'). ` +
+        `GSTIN '${invoiceData.SellerDtls.Gstin}' belongs to state ${gstinState}, not ${declaredState}.`
+      );
+    }
+  }
+
+  // --- Buyer GSTIN vs Stcd (skip for URP / unregistered buyers) ---
+  if (invoiceData.BuyerDtls?.Gstin && invoiceData.BuyerDtls.Gstin !== 'URP' && invoiceData.BuyerDtls?.Stcd) {
+    const gstinState = invoiceData.BuyerDtls.Gstin.substring(0, 2);
+    const declaredState = normalize(invoiceData.BuyerDtls.Stcd);
+    if (gstinState !== declaredState) {
+      errors.push(
+        `BuyerDtls.Stcd ('${invoiceData.BuyerDtls.Stcd}') does not match the state code in BuyerDtls.Gstin ('${gstinState}'). ` +
+        `GSTIN '${invoiceData.BuyerDtls.Gstin}' belongs to state ${gstinState}, not ${declaredState}.`
+      );
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * Shared Inter/Intra-State tax consistency validation — used by both /generate and /validate
+ *
+ * Derives the seller state from GSTIN (source of truth) and compares against
+ * BuyerDtls.Pos to determine inter/intra-state. Then validates:
+ *   - Inter-state: IGST must carry the tax; CGST+SGST must be 0 (at both ValDtls and item level)
+ *   - Intra-state: CGST+SGST must carry the tax; IGST must be 0 (unless IgstOnIntra = 'Y')
+ */
+function validateTaxTypeConsistency(invoiceData) {
+  const errors = [];
+
+  if (!invoiceData.SellerDtls?.Gstin || !invoiceData.BuyerDtls?.Pos) {
+    return errors; // Can't determine without these fields
+  }
+
+  // Use GSTIN-derived state as source of truth (not user-provided Stcd)
+  const sellerState = invoiceData.SellerDtls.Gstin.substring(0, 2);
+  const pos = String(invoiceData.BuyerDtls.Pos).padStart(2, '0');
+
+  const supplyResult = determineSupplyType(sellerState, pos);
+  if (!supplyResult.valid) {
+    return errors; // Invalid state codes are caught elsewhere
+  }
+
+  const igstOnIntra = invoiceData.TranDtls && invoiceData.TranDtls.IgstOnIntra === 'Y';
+
+  // --- ValDtls-level checks ---
+  if (invoiceData.ValDtls) {
+    if (supplyResult.isInterstate) {
+      // Inter-State: CGST and SGST must be 0
+      if (invoiceData.ValDtls.CgstVal && invoiceData.ValDtls.CgstVal !== 0) {
+        errors.push(`Inter-State supply (sellerState=${sellerState}, Pos=${pos}): ValDtls.CgstVal must be 0 for IGST transactions`);
+      }
+      if (invoiceData.ValDtls.SgstVal && invoiceData.ValDtls.SgstVal !== 0) {
+        errors.push(`Inter-State supply (sellerState=${sellerState}, Pos=${pos}): ValDtls.SgstVal must be 0 for IGST transactions`);
+      }
+    } else {
+      // Intra-State: IGST must be 0 (unless IgstOnIntra)
+      if (!igstOnIntra && invoiceData.ValDtls.IgstVal && invoiceData.ValDtls.IgstVal !== 0) {
+        errors.push(`Intra-State supply (sellerState=${sellerState}, Pos=${pos}): ValDtls.IgstVal must be 0 for CGST+SGST transactions (unless IgstOnIntra is 'Y')`);
+      }
+    }
+  }
+
+  // --- Item-level checks ---
+  if (invoiceData.ItemList && Array.isArray(invoiceData.ItemList)) {
+    for (let i = 0; i < invoiceData.ItemList.length; i++) {
+      const item = invoiceData.ItemList[i];
+      if (supplyResult.isInterstate) {
+        if (item.CgstAmt && item.CgstAmt !== 0) {
+          errors.push(`Inter-State supply: ItemList[${i}].CgstAmt must be 0 for IGST transactions`);
+        }
+        if (item.SgstAmt && item.SgstAmt !== 0) {
+          errors.push(`Inter-State supply: ItemList[${i}].SgstAmt must be 0 for IGST transactions`);
+        }
+      } else {
+        if (!igstOnIntra && item.IgstAmt && item.IgstAmt !== 0) {
+          errors.push(`Intra-State supply: ItemList[${i}].IgstAmt must be 0 for CGST+SGST transactions (unless IgstOnIntra is 'Y')`);
+        }
+      }
+    }
+  }
+
+  return errors;
+}
+
 // ==================== DYNAMIC GENERATION ENDPOINTS ====================
 
 // Generate dynamic invoice
@@ -967,38 +1077,24 @@ router.post('/generate', (req, res) => {
       });
     }
 
-    // Inter/Intra-State tax consistency validation
-    if (invoiceData.SellerDtls && invoiceData.BuyerDtls) {
-      const supplyResult = determineSupplyType(
-        invoiceData.SellerDtls.Stcd,
-        invoiceData.BuyerDtls.Pos
-      );
+    // GSTIN ↔ State Code consistency (seller GSTIN must match seller Stcd, etc.)
+    const gstinStateErrors = validateGstinStateConsistency(invoiceData);
+    if (gstinStateErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'GSTIN-State code mismatch',
+        errors: gstinStateErrors
+      });
+    }
 
-      if (supplyResult.valid && invoiceData.ValDtls) {
-        const taxErrors = [];
-        if (supplyResult.isInterstate) {
-          // Inter-State: CGST and SGST must be 0, IGST should carry the tax
-          if (invoiceData.ValDtls.CgstVal && invoiceData.ValDtls.CgstVal !== 0) {
-            taxErrors.push(`Inter-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): CgstVal must be 0 for IGST transactions`);
-          }
-          if (invoiceData.ValDtls.SgstVal && invoiceData.ValDtls.SgstVal !== 0) {
-            taxErrors.push(`Inter-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): SgstVal must be 0 for IGST transactions`);
-          }
-        } else {
-          // Intra-State: IGST must be 0, CGST+SGST should carry the tax (unless IgstOnIntra = 'Y')
-          const igstOnIntra = invoiceData.TranDtls && invoiceData.TranDtls.IgstOnIntra === 'Y';
-          if (!igstOnIntra && invoiceData.ValDtls.IgstVal && invoiceData.ValDtls.IgstVal !== 0) {
-            taxErrors.push(`Intra-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): IgstVal must be 0 for CGST+SGST transactions (unless IgstOnIntra is 'Y')`);
-          }
-        }
-        if (taxErrors.length > 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'Inter/Intra-State tax mismatch',
-            errors: taxErrors
-          });
-        }
-      }
+    // Inter/Intra-State tax consistency (uses GSTIN-derived state as source of truth)
+    const taxConsistencyErrors = validateTaxTypeConsistency(invoiceData);
+    if (taxConsistencyErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Inter/Intra-State tax mismatch',
+        errors: taxConsistencyErrors
+      });
     }
 
     // Validate amounts (positive values, cross-field math)
@@ -1118,36 +1214,24 @@ router.post('/validate', (req, res) => {
       });
     }
 
-    // Inter/Intra-State tax consistency validation
-    if (invoiceData.SellerDtls && invoiceData.BuyerDtls) {
-      const supplyResult = determineSupplyType(
-        invoiceData.SellerDtls.Stcd,
-        invoiceData.BuyerDtls.Pos
-      );
+    // GSTIN ↔ State Code consistency (seller GSTIN must match seller Stcd, etc.)
+    const gstinStateErrors = validateGstinStateConsistency(invoiceData);
+    if (gstinStateErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        isValid: false,
+        errors: gstinStateErrors.map(e => ({ message: e, type: 'gstin_state_mismatch' }))
+      });
+    }
 
-      if (supplyResult.valid && invoiceData.ValDtls) {
-        const taxErrors = [];
-        if (supplyResult.isInterstate) {
-          if (invoiceData.ValDtls.CgstVal && invoiceData.ValDtls.CgstVal !== 0) {
-            taxErrors.push(`Inter-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): CgstVal must be 0 for IGST transactions`);
-          }
-          if (invoiceData.ValDtls.SgstVal && invoiceData.ValDtls.SgstVal !== 0) {
-            taxErrors.push(`Inter-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): SgstVal must be 0 for IGST transactions`);
-          }
-        } else {
-          const igstOnIntra = invoiceData.TranDtls && invoiceData.TranDtls.IgstOnIntra === 'Y';
-          if (!igstOnIntra && invoiceData.ValDtls.IgstVal && invoiceData.ValDtls.IgstVal !== 0) {
-            taxErrors.push(`Intra-State supply (sellerState=${invoiceData.SellerDtls.Stcd}, Pos=${invoiceData.BuyerDtls.Pos}): IgstVal must be 0 for CGST+SGST transactions (unless IgstOnIntra is 'Y')`);
-          }
-        }
-        if (taxErrors.length > 0) {
-          return res.status(400).json({
-            success: false,
-            isValid: false,
-            errors: taxErrors.map(e => ({ message: e, type: 'tax_mismatch' }))
-          });
-        }
-      }
+    // Inter/Intra-State tax consistency (uses GSTIN-derived state as source of truth)
+    const taxConsistencyErrors = validateTaxTypeConsistency(invoiceData);
+    if (taxConsistencyErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        isValid: false,
+        errors: taxConsistencyErrors.map(e => ({ message: e, type: 'tax_mismatch' }))
+      });
     }
 
     // Amount validations (positive values, cross-field math)
