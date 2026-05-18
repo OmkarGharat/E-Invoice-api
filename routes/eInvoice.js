@@ -82,6 +82,20 @@ function validateAmounts(invoiceData) {
     }
   }
 
+  // ===== INVOICE-LEVEL: TotInvVal = AssVal + CgstVal + SgstVal + IgstVal =====
+  if (invoiceData.ValDtls) {
+    const vd = invoiceData.ValDtls;
+    if (vd.AssVal !== undefined && vd.CgstVal !== undefined && vd.SgstVal !== undefined && vd.IgstVal !== undefined && vd.TotInvVal !== undefined) {
+      const otherCharges = vd.OthChrg || 0;
+      const discount = vd.Discount || 0;
+      const roundOff = vd.RndOffAmt || 0;
+      const expectedTotal = round2(vd.AssVal + vd.CgstVal + vd.SgstVal + vd.IgstVal + otherCharges - discount + roundOff);
+      if (round2(vd.TotInvVal) !== expectedTotal) {
+        errors.push(`ValDtls.TotInvVal (${vd.TotInvVal}) does not match AssVal + CgstVal + SgstVal + IgstVal + OthChrg - Discount + RndOffAmt (${expectedTotal})`);
+      }
+    }
+  }
+
   // Validate item-level amounts
   if (invoiceData.ItemList && Array.isArray(invoiceData.ItemList)) {
     for (let i = 0; i < invoiceData.ItemList.length; i++) {
@@ -106,6 +120,24 @@ function validateAmounts(invoiceData) {
         const expectedTotAmt = round2(item.Qty * item.UnitPrice);
         if (round2(item.TotAmt) !== expectedTotAmt) {
           errors.push(`ItemList[${i}].TotAmt (${item.TotAmt}) does not match Qty * UnitPrice (${expectedTotAmt})`);
+        }
+      }
+
+      // Cross-field: AssAmt should equal TotAmt - Discount (or TotAmt if no Discount)
+      if (item.TotAmt !== undefined && item.AssAmt !== undefined) {
+        const itemDiscount = item.Discount || 0;
+        const expectedAssAmt = round2(item.TotAmt - itemDiscount);
+        if (round2(item.AssAmt) !== expectedAssAmt) {
+          errors.push(`ItemList[${i}].AssAmt (${item.AssAmt}) does not match TotAmt - Discount (${expectedAssAmt})`);
+        }
+      }
+
+      // Cross-field: Tax amounts should match AssAmt * GstRt
+      if (item.AssAmt !== undefined && item.GstRt !== undefined) {
+        const expectedTotalTax = round2(item.AssAmt * item.GstRt / 100);
+        const actualTotalTax = round2((item.IgstAmt || 0) + (item.CgstAmt || 0) + (item.SgstAmt || 0));
+        if (actualTotalTax !== expectedTotalTax) {
+          errors.push(`ItemList[${i}]: Total tax (IgstAmt + CgstAmt + SgstAmt = ${actualTotalTax}) does not match AssAmt * GstRt / 100 (${expectedTotalTax})`);
         }
       }
 
